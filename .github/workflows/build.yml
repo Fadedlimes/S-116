@@ -1,0 +1,146 @@
+name: Build S-116 Multi-Platform
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+            name: Linux (x86_64)
+            zip_name: Simple116-Linux-x86_64.zip
+
+          - os: macos-14
+            platform: macos
+            name: macOS (Universal arm64+x86_64)
+            zip_name: Simple116-macOS-Universal.zip
+
+          - os: windows-latest
+            platform: windows
+            name: Windows (x64)
+            zip_name: Simple116-Windows-x64.zip
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # ------------------------------------------------------------------------
+      # Linux System Dependencies
+      # ------------------------------------------------------------------------
+      - name: Install Linux Dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libjack-jackd2-dev \
+            ladspa-sdk \
+            libfreetype6-dev \
+            libx11-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libgl1-mesa-dev \
+            mesa-common-dev
+
+      # ------------------------------------------------------------------------
+      # Configure CMake
+      # ------------------------------------------------------------------------
+      - name: Configure CMake
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      # ------------------------------------------------------------------------
+      # Compile All Targets
+      # ------------------------------------------------------------------------
+      - name: Build S-116
+        run: |
+          cmake --build build --config Release --parallel
+
+      # ------------------------------------------------------------------------
+      # Package Artifacts: Linux
+      # ------------------------------------------------------------------------
+      - name: Package Linux Artifacts
+        if: matrix.platform == 'linux'
+        run: |
+          mkdir -p package_linux
+          cp -r build/Simple116_artefacts/Release/VST3/Simple116.vst3 package_linux/
+          cp build/Simple116_artefacts/Release/Standalone/Simple116 package_linux/
+          if [ -f "EXP-00.s116card" ]; then
+            cp EXP-00.s116card package_linux/
+          fi
+          cd package_linux
+          zip -r ../${{ matrix.zip_name }} *
+          cd ..
+
+      # ------------------------------------------------------------------------
+      # Package Artifacts: macOS
+      # ------------------------------------------------------------------------
+      - name: Package macOS Artifacts
+        if: matrix.platform == 'macos'
+        run: |
+          mkdir -p package_macos
+          cp -r build/Simple116_artefacts/Release/VST3/Simple116.vst3 package_macos/
+          cp -r build/Simple116_artefacts/Release/AU/Simple116.component package_macos/
+          cp -r build/Simple116_artefacts/Release/Standalone/Simple116.app package_macos/
+          if [ -f "EXP-00.s116card" ]; then
+            cp EXP-00.s116card package_macos/
+          fi
+          cd package_macos
+          zip -r -y ../${{ matrix.zip_name }} *
+          cd ..
+
+      # ------------------------------------------------------------------------
+      # Package Artifacts: Windows
+      # ------------------------------------------------------------------------
+      - name: Package Windows Artifacts
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package_windows
+          Copy-Item -Recurse -Force "build\Simple116_artefacts\Release\VST3\Simple116.vst3" "package_windows\"
+          Copy-Item -Force "build\Simple116_artefacts\Release\Standalone\Simple116.exe" "package_windows\"
+          if (Test-Path "EXP-00.s116card") {
+            Copy-Item -Force "EXP-00.s116card" "package_windows\"
+          }
+          Compress-Archive -Path "package_windows\*" -DestinationPath "${{ matrix.zip_name }}" -Force
+
+      # ------------------------------------------------------------------------
+      # Upload CI Run Artifacts (Accessible on every commit/PR summary)
+      # ------------------------------------------------------------------------
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.zip_name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      # ------------------------------------------------------------------------
+      # Automated GitHub Release Publishing (Triggered on git tag pushes)
+      # ------------------------------------------------------------------------
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.zip_name }}
