@@ -563,7 +563,7 @@ public:
         const float hudY = glassRect.getY() + 3.0f;
         const juce::String trkStr = (activeTrack == TrackID::TrackA) ? "TRK A [CH 1]" : "TRK B [CH 2]";
         const juce::String bpmStr = "BPM:" + juce::String(bpm, 1) + (syncToHost ? " [HOST]" : " [INT]");
-        const juce::String qwertStr = isQwertyFocused ? "QWERTY: [←/→ NAV | SPC: TOGGLE | ↑/↓: NOTE]" : "CLICK TO FOCUS QWERTY";
+        const juce::String qwertStr = isQwertyFocused ? "QWERTY: [<-> NAV | SPC: TOGGLE | UP/DN: NOTE]" : "CLICK TO FOCUS QWERTY";
 
         g.setColour(ghostCol);
         g.drawText(trkStr, glassRect.getX() + 6.0f + 1.0f, hudY + 1.0f, 110.0f, 12.0f, juce::Justification::centredLeft, false);
@@ -661,8 +661,12 @@ public:
 
             if (isStepActive)
             {
-                const float effectiveGateNorm = std::clamp(stepGate > 0.0f ? (stepGate / 2.0f) : (globalGate / 2.0f), 0.05f, 1.0f);
-                const float gateBarW = (colRect.getWidth() - 4.0f) * effectiveGateNorm;
+                // The stripe spans 0%..200% of the step, which is exactly the
+                // range of the STEP GATE dial, so the bar position and the
+                // position the user can drag to always mean the same thing.
+                const float effectiveGate = (stepGate > 0.0f) ? stepGate : globalGate;
+                const float gateNorm = std::clamp(effectiveGate / 2.0f, 0.0f, 1.0f);
+                const float gateBarW = (colRect.getWidth() - 4.0f) * gateNorm;
                 g.setColour(stepGate > 0.0f ? ledCol.brighter(0.4f) : ledCol.withAlpha(0.50f));
                 g.fillRect(colRect.getX() + 2.0f, gateY, gateBarW, gateH);
             }
@@ -671,9 +675,21 @@ public:
             const float badgeY = gateY + gateH + 2.0f;
             if (hasLock)
             {
+                // Vector diamond: the U+25C6 glyph is missing from many Linux fonts
+                // and renders as a "tofu" box, so the badge is drawn as a path.
                 g.setColour(juce::Colour(0xffffcc00)); // Gold diamond for P-Locks
-                g.setFont(juce::Font(juce::FontOptions(7.5f).withStyle("Bold")));
-                g.drawText("◆", colRect.getX(), badgeY, colRect.getWidth(), 8.0f, juce::Justification::centred, false);
+                const float diamondSize = 5.0f;
+                const float diamondCx = colRect.getCentreX();
+                const float diamondCy = badgeY + 4.0f;
+
+                juce::Path diamond;
+                diamond.startNewSubPath (diamondCx, diamondCy - diamondSize * 0.5f);
+                diamond.lineTo (diamondCx + diamondSize * 0.5f, diamondCy);
+                diamond.lineTo (diamondCx, diamondCy + diamondSize * 0.5f);
+                diamond.lineTo (diamondCx - diamondSize * 0.5f, diamondCy);
+                diamond.closeSubPath();
+
+                g.fillPath (diamond);
             }
             else if (ratchet > 1)
             {
@@ -753,10 +769,31 @@ public:
             const float velAreaY = glassRect.getY() + 17.0f + 30.0f;
             const float velAreaH = 34.0f;
 
+            // Per-step gate stripe sits directly underneath the velocity column.
+            const float gateY = velAreaY + velAreaH + 2.0f;
+            const float gateH = 4.0f;
+
             if (e.y >= velAreaY && e.y <= velAreaY + velAreaH)
             {
                 const float normVel = std::clamp(1.0f - ((e.y - velAreaY) / velAreaH), 0.05f, 1.0f);
                 if (onStepVelocityChanged) onStepVelocityChanged(targetStep, normVel);
+                repaint();
+            }
+            else if (e.y >= gateY - 1.0f && e.y <= gateY + gateH + 1.0f)
+            {
+                // Horizontal drag across the stripe sets the note length of that step.
+                const auto colRect = juce::Rectangle<float>(gridX + (static_cast<float>(col) * stepW),
+                                                             glassRect.getY() + 17.0f,
+                                                             stepW - 2.0f,
+                                                             glassRect.getHeight() - 20.0f);
+                const float usable = std::max(1.0f, colRect.getWidth() - 4.0f);
+                const float norm = std::clamp((e.x - (colRect.getX() + 2.0f)) / usable, 0.0f, 1.0f);
+
+                // The stripe spans 0%..200% of the step: dragging to the far left
+                // hands the step back to the track gate (TRK).
+                const float newGate = norm * 2.0f;
+
+                if (onStepGateChanged) onStepGateChanged(targetStep, newGate);
                 repaint();
             }
         }
@@ -801,6 +838,25 @@ private:
 // =============================================================================
 // Main Audio Processor Editor
 // =============================================================================
+class EditorCanvas : public juce::Component
+{
+public:
+    // Note: a default constructor has to be declared explicitly, because the
+    // JUCE_DECLARE_NON_COPYABLE macro below counts as a user declared constructor.
+    EditorCanvas() = default;
+
+    std::function<void(juce::Graphics&)> onPaint;
+
+    void paint(juce::Graphics& g) override
+    {
+        if (onPaint != nullptr)
+            onPaint(g);
+    }
+
+private:
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EditorCanvas)
+};
+
 class Simple116AudioProcessorEditor : public juce::AudioProcessorEditor,
                                       private juce::Timer
 {
@@ -813,6 +869,11 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
+
+    // Screen fitting: the console has a fixed 1360x820 canvas. On displays that
+    // cannot show it at 1:1 the whole console is scaled down uniformly.
+    void applyFitScale();
+    void paintChassis(juce::Graphics& g);
 
     // Preset & Expansion Card Disk Management
     void refreshPresetList();
@@ -835,6 +896,9 @@ public:
     void updateSequencerLcd() noexcept;
     void refreshSelectedStepUI() noexcept;
     void auditionSelectedStep() noexcept;
+
+    // Sub Oscillator Waveform (Sine / Square)
+    void updateSubWaveButton() noexcept;
 
 private:
     void timerCallback() override;
@@ -883,6 +947,12 @@ private:
     Simple106AudioProcessor& audioProcessor;
     StudioLookAndFeel studioLookAndFeel;
 
+    // All console widgets live on this canvas so that the entire UI can be
+    // scaled uniformly (see applyFitScale) without touching the layout code.
+    EditorCanvas uiCanvas;
+    float uiScale = 1.0f;
+    bool isApplyingFitScale = false;
+
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -916,6 +986,7 @@ private:
 
     juce::TextButton chassisThemeButton;
     juce::TextButton ledThemeButton;
+    juce::TextButton crtThemeButton;
 
     WorkstationLcdComponent lcdScreen;
 
@@ -953,6 +1024,7 @@ private:
     juce::Slider subOscLevelSlider;
     juce::Label subOscLevelLabel;
     juce::TextButton subOscOctaveButton;
+    juce::TextButton subOscWaveButton;
     juce::Slider noiseLevelSlider;
     juce::Label noiseLevelLabel;
     juce::TextButton supersawModeButton;

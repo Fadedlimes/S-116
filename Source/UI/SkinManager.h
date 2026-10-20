@@ -87,6 +87,36 @@ public:
 
     LEDTheme getLEDTheme() const noexcept { return currentLEDTheme; }
 
+    /** The parameter name of an LED theme. The order has to match the LEDTheme
+        enumeration, because the stored parameter index is cast straight to the enum. */
+    static juce::String getLEDThemeName (LEDTheme theme) noexcept
+    {
+        switch (theme)
+        {
+            case LEDTheme::Cyan:          return "Cyan";
+            case LEDTheme::PhosphorGreen: return "Phosphor Green";
+            case LEDTheme::Amber:         return "Amber";
+            case LEDTheme::RubyRed:       return "Ruby Red";
+            case LEDTheme::UltraViolet:   return "Ultra Violet";
+            default:                      return "Cyan";
+        }
+    }
+
+    /** The parameter name of a CRT (oscilloscope) theme. Same ordering rule as above. */
+    static juce::String getCRTThemeOptionName (CRTTheme theme) noexcept
+    {
+        switch (theme)
+        {
+            case CRTTheme::Cyan:          return "Cyan";
+            case CRTTheme::PhosphorGreen: return "Phosphor Green";
+            case CRTTheme::Amber:         return "Amber";
+            case CRTTheme::RubyRed:       return "Ruby Red";
+            case CRTTheme::UltraViolet:   return "Ultra Violet";
+            case CRTTheme::IceWhite:      return "Ice White";
+            default:                      return "Cyan";
+        }
+    }
+
     void cycleLEDTheme() noexcept
     {
         int next = (static_cast<int>(currentLEDTheme) + 1) % static_cast<int>(LEDTheme::Count);
@@ -412,6 +442,8 @@ public:
         l->setColour(juce::TextEditor::textColourId, SkinManager::getInstance().getTextColour());
         l->setFont(juce::Font(juce::FontOptions(9.5f).withStyle("Bold")));
         l->setBorderSize(juce::BorderSize<int>(0));
+        // Shrink long values instead of eliding them to "128.0..."
+        l->setMinimumHorizontalScale (0.5f);
         l->setOpaque(false);
         return l;
     }

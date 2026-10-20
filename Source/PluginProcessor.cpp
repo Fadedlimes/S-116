@@ -39,6 +39,23 @@ apvts(*this, nullptr, "Parameters", createParameterLayout())
     // Auto-discover any expansion cards in Documents/Fadedlimes/S-116/Expansions
     expansionCardManager.scanExpansionsFolder();
 
+    // Seed the theme parameters with the colours the user last chose (they live in
+    // the global settings file). A restored session overwrites these again, so the
+    // VST session colour always wins once a project has been loaded.
+    {
+        auto& skin = SkinManager::getInstance();
+
+        auto seed = [this] (const char* paramId, int value)
+        {
+            if (auto* p = apvts.getParameter (paramId))
+                p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float>(value)));
+        };
+
+        seed ("guiTheme", static_cast<int>(skin.getChassisTheme()));
+        seed ("ledTheme", static_cast<int>(skin.getLEDTheme()));
+        seed ("crtTheme", static_cast<int>(skin.getCRTTheme()));
+    }
+
     // Initialize with clean bi-timbral Mod Matrices and analog INIT baseline
     modMatrix.reset();
     loadFactoryPreset(0);
@@ -132,6 +149,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout Simple116AudioProcessor::cre
     params.push_back(std::make_unique<juce::AudioParameterChoice>("subOctave", "Sub Octave",
                                                                   juce::StringArray{"-1", "-2"}, 0));
     params.push_back(std::make_unique<juce::AudioParameterFloat>("subLevel", "Sub Level", 0.0f, 1.0f, 0.0f));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>("subWaveform", "Sub Waveform",
+                                                                  juce::StringArray{"Square", "Sine"}, 1));
     params.push_back(std::make_unique<juce::AudioParameterFloat>("noiseLevel", "Noise Level", 0.0f, 1.0f, 0.0f));
 
     // Filter 1
@@ -248,10 +267,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout Simple116AudioProcessor::cre
                                                                   juce::StringArray{"1 PG [16]", "2 PG [32]", "3 PG [48]", "4 PG [64]"}, 3));
 
     // Themes
+    // NOTE: The choice order must match the LEDTheme / CRTTheme enumerations in
+    // UI/SkinManager.h exactly, so that the stored index can be cast directly.
+    juce::StringArray ledThemeNames;
+    for (int i = 0; i < static_cast<int>(LEDTheme::Count); ++i)
+        ledThemeNames.add (SkinManager::getLEDThemeName (static_cast<LEDTheme>(i)));
+
+    juce::StringArray crtThemeNames;
+    for (int i = 0; i < static_cast<int>(CRTTheme::Count); ++i)
+        crtThemeNames.add (SkinManager::getCRTThemeOptionName (static_cast<CRTTheme>(i)));
+
     params.push_back(std::make_unique<juce::AudioParameterChoice>("guiTheme", "Theme",
                                                                   juce::StringArray{"Classic Silver", "Midnight Blue", "Vintage Wood", "Stealth Dark"}, 0));
-    params.push_back(std::make_unique<juce::AudioParameterChoice>("ledTheme", "LED Colour",
-                                                                  juce::StringArray{"Red", "Cyan", "Green", "Amber", "Yellow", "Purple", "White"}, 0));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>("ledTheme", "LED Colour", ledThemeNames, 0));
+    params.push_back(std::make_unique<juce::AudioParameterChoice>("crtTheme", "Scope Colour", crtThemeNames, 0));
 
     // Master FX Suite
     params.push_back(std::make_unique<juce::AudioParameterChoice>("chorusMode", "Chorus",
@@ -341,6 +370,7 @@ void Simple116AudioProcessor::captureCurrentPartFromApvts(int part) {
     p.dco1Octave  = static_cast<int>(getVal("dco1Octave", 2.0f));
     p.syncMode    = getVal("syncMode", 0.0f) > 0.5f;
     p.subOctave   = static_cast<int>(getVal("subOctave", 0.0f));
+    p.subWaveform = static_cast<int>(getVal("subWaveform", 1.0f));
 
     p.filterRouting = getVal("filterRouting", 0.0f) > 0.5f;
     p.f2Mode      = static_cast<int>(getVal("f2Mode", 0.0f));
@@ -402,6 +432,7 @@ void Simple116AudioProcessor::applyPartToApvts(int part) {
 
     setVal("subOctave", static_cast<float>(p.subOctave));
     setVal("subLevel", p.subLevel);
+    setVal("subWaveform", static_cast<float>(p.subWaveform));
     setVal("noiseLevel", p.noiseLevel);
 
     setVal("hpfCutoff", p.hpfCutoff);
@@ -762,9 +793,14 @@ juce::String Simple116AudioProcessor::createPatchXml(const juce::String& patchNa
                 root->removeChildElement(child, true);
             } else if (!isProjectState && tag == "PARAM") {
                 auto id = child->getStringAttribute("id");
-                if (id == "guiTheme" || id == "ledTheme")
+                if (id == "guiTheme" || id == "ledTheme" || id == "crtTheme")
                     root->removeChildElement(child, true);
-                else if (id == "seqPlay")
+                else if (id == "seqPlay" || id == "seqRec")
+                    child->setAttribute("value", 0.0f);
+            } else if (isProjectState && tag == "PARAM") {
+                // Transport state is never persisted: a reopened project must come up stopped.
+                auto id = child->getStringAttribute("id");
+                if (id == "seqPlay" || id == "seqRec")
                     child->setAttribute("value", 0.0f);
             }
         }
@@ -791,6 +827,7 @@ juce::String Simple116AudioProcessor::createPatchXml(const juce::String& patchNa
         partXml->setAttribute("xmodMode", p.xmodMode);
         partXml->setAttribute("subOctave", p.subOctave);
         partXml->setAttribute("subLevel", p.subLevel);
+        partXml->setAttribute("subWaveform", p.subWaveform);
         partXml->setAttribute("noiseLevel", p.noiseLevel);
         partXml->setAttribute("hpfCutoff", p.hpfCutoff);
         partXml->setAttribute("lpfCutoff", p.lpfCutoff);
@@ -912,6 +949,9 @@ void Simple116AudioProcessor::loadPatchXml(const juce::String& xmlString, bool i
 
     float savedGuiTheme = apvts.getRawParameterValue("guiTheme")->load();
     float savedLedTheme = apvts.getRawParameterValue("ledTheme")->load();
+    float savedCrtTheme = apvts.getRawParameterValue("crtTheme") != nullptr
+                             ? apvts.getRawParameterValue("crtTheme")->load()
+                             : 0.0f;
 
     auto xml = juce::XmlDocument::parse(xmlString);
     if (xml != nullptr) {
@@ -938,9 +978,9 @@ void Simple116AudioProcessor::loadPatchXml(const juce::String& xmlString, bool i
                 auto* child = xml->getChildElement(i);
                 if (child != nullptr && child->hasTagName("PARAM")) {
                     auto id = child->getStringAttribute("id");
-                    if (id == "guiTheme" || id == "ledTheme")
+                    if (id == "guiTheme" || id == "ledTheme" || id == "crtTheme")
                         xml->removeChildElement(child, true);
-                    else if (id == "seqPlay")
+                    else if (id == "seqPlay" || id == "seqRec")
                         child->setAttribute("value", 0.0f);
                 }
             }
@@ -956,10 +996,19 @@ void Simple116AudioProcessor::loadPatchXml(const juce::String& xmlString, bool i
                 pGui->setValueNotifyingHost(pGui->convertTo0to1(savedGuiTheme));
             if (auto* pLed = apvts.getParameter("ledTheme"))
                 pLed->setValueNotifyingHost(pLed->convertTo0to1(savedLedTheme));
-            if (auto* pPlay = apvts.getParameter("seqPlay"))
-                pPlay->setValueNotifyingHost(0.0f);
-            sequencer.isPlaying = false;
+            if (auto* pCrt = apvts.getParameter("crtTheme"))
+                pCrt->setValueNotifyingHost(pCrt->convertTo0to1(savedCrtTheme));
         }
+
+        // Transport is never restored: a project/patch must always come up with the
+        // sequencer stopped, otherwise the "PLAY" state survives a close/reopen cycle.
+        if (auto* pPlay = apvts.getParameter("seqPlay"))
+            pPlay->setValueNotifyingHost(0.0f);
+        if (auto* pRec = apvts.getParameter("seqRec"))
+            pRec->setValueNotifyingHost(0.0f);
+
+        sequencer.isPlaying = false;
+        sequencer.isRecording = false;
 
         auto deserializePart = [](juce::XmlElement* partXml, TimbrePatch& p) {
             if (partXml == nullptr) return;
@@ -981,6 +1030,7 @@ void Simple116AudioProcessor::loadPatchXml(const juce::String& xmlString, bool i
             p.xmodMode    = partXml->getIntAttribute("xmodMode", p.xmodMode);
             p.subOctave   = partXml->getIntAttribute("subOctave", p.subOctave);
             p.subLevel    = static_cast<float>(partXml->getDoubleAttribute("subLevel", p.subLevel));
+            p.subWaveform = partXml->getIntAttribute("subWaveform", p.subWaveform);
             p.noiseLevel  = static_cast<float>(partXml->getDoubleAttribute("noiseLevel", p.noiseLevel));
             p.hpfCutoff   = static_cast<float>(partXml->getDoubleAttribute("hpfCutoff", p.hpfCutoff));
             p.lpfCutoff   = static_cast<float>(partXml->getDoubleAttribute("lpfCutoff", p.lpfCutoff));
@@ -2061,7 +2111,8 @@ void Simple116AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     pA.filterRouting, finalFBal_A,
                     curAuxPitch_A, curAuxF1_A, curAuxF2_A, curAuxFold_A, curAuxPWM_A,
                     pA.f2KeyTrack,
-                    finalD1SawDetune_A, finalXmod_A, finalD2Fold_A
+                    finalD1SawDetune_A, finalXmod_A, finalD2Fold_A,
+                    pA.subWaveform
                 );
                 sumA_L += vL;
                 sumA_R += vR;
@@ -2078,7 +2129,8 @@ void Simple116AudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     pB.filterRouting, finalFBal_B,
                     curAuxPitch_B, curAuxF1_B, curAuxF2_B, curAuxFold_B, curAuxPWM_B,
                     pB.f2KeyTrack,
-                    finalD1SawDetune_B, finalXmod_B, finalD2Fold_B
+                    finalD1SawDetune_B, finalXmod_B, finalD2Fold_B,
+                    pB.subWaveform
                 );
                 sumB_L += vL;
                 sumB_R += vR;

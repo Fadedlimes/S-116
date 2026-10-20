@@ -595,7 +595,8 @@ public:
         float auxPitchMod = 0.0f, float auxF1Mod = 0.0f, float auxF2Mod = 0.0f,
         float auxFoldMod = 0.0f, float auxPWMMod = 0.0f,
         float f2KeyTrack = 0.0f,
-        float d1SawDetune = -1.0f, float fmAmount = 0.0f, float modD2Fold = 0.0f
+        float d1SawDetune = -1.0f, float fmAmount = 0.0f, float modD2Fold = 0.0f,
+        int subWave = 0
     ) noexcept
     {
         if (!active)
@@ -671,7 +672,7 @@ public:
 
         lastOsc1Output = osc1Sample;
 
-        // 4. Phase-Locked Roland Sub-Oscillator
+        // 4. Phase-Locked Roland Sub-Oscillator (Square or Sine, phase locked to DCO 1)
         float subSample = 0.0f;
         const float fSubLevel = std::clamp(static_cast<float>(modSub), 0.0f, 1.0f);
         if (fSubLevel > 0.001f)
@@ -684,13 +685,24 @@ public:
             const double subPhase = ((d1CycleCount % static_cast<int>(subDiv)) + d1Phase) / subDiv;
             const double subDt = d1Inc / subDiv;
 
-            double s = (subPhase < 0.5) ? 1.0 : -1.0;
-            s += PolyBLEPOscillator::polyBlep(subPhase, subDt);
-            
-            double t2 = subPhase + 0.5;
-            if (t2 >= 1.0) t2 -= 1.0;
-            s -= PolyBLEPOscillator::polyBlep(t2, subDt);
-            
+            double s = 0.0;
+
+            if (subWave == 1)
+            {
+                // Pure sine sub: no band-limiting steps required, it is already continuous.
+                s = std::sin (subPhase * juce::MathConstants<double>::twoPi);
+            }
+            else
+            {
+                // Classic band-limited square sub (PolyBLEP corrected).
+                s = (subPhase < 0.5) ? 1.0 : -1.0;
+                s += PolyBLEPOscillator::polyBlep(subPhase, subDt);
+
+                double t2 = subPhase + 0.5;
+                if (t2 >= 1.0) t2 -= 1.0;
+                s -= PolyBLEPOscillator::polyBlep(t2, subDt);
+            }
+
             subSample = static_cast<float>(s);
         }
 

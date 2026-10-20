@@ -53,6 +53,7 @@ struct TimbrePatch
     // Sub & Noise
     int   subOctave   = 0;
     float subLevel    = 0.0f;
+    int   subWaveform = 1; // 0 = Square (classic Roland), 1 = Sine
     float noiseLevel  = 0.0f;
 
     // Filters
@@ -367,7 +368,7 @@ private:
     float smoothedExpression = 1.0f;
     float smoothedBreath = 0.0f;
 
-    bool seqGateLinked = false;
+    bool seqGateLinked = true;
 
     std::array<std::array<float, LockParamID::Lock_ParamCount>, 2> currentPLockValues {};
 

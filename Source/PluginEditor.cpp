@@ -84,6 +84,15 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     setLookAndFeel(&studioLookAndFeel);
     configureFocus(*this);
 
+    // The console is a fixed 1360x820 canvas. Everything is parented to a single
+    // canvas component so the whole UI can be scaled down uniformly on displays
+    // that are too small to show it at 1:1 (common on Linux laptops).
+    uiCanvas.setBounds(0, 0, UI_WIDTH, UI_HEIGHT);
+    uiCanvas.setWantsKeyboardFocus(false);
+    uiCanvas.setMouseClickGrabsKeyboardFocus(false);
+    uiCanvas.onPaint = [this](juce::Graphics& g) { paintChassis(g); };
+    addAndMakeVisible(uiCanvas);
+
     // ==========================================
     // 1. Header Bar Controls
     // ==========================================
@@ -91,7 +100,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     titleBadgeLabel.setFont(juce::Font(juce::FontOptions(20.0f).withStyle("Bold")));
     titleBadgeLabel.setJustificationType(juce::Justification::centred);
     configureFocus(titleBadgeLabel);
-    addAndMakeVisible(titleBadgeLabel);
+    uiCanvas.addAndMakeVisible(titleBadgeLabel);
 
     setupComboBox(presetComboBox, presetLabel, "PRESET", { "Init Patch" }, 1);
     setupButton(prevPresetButton, "<", false);
@@ -180,8 +189,25 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
         repaint();
     };
 
+    // The scope colour is a first class parameter so that it travels with the
+    // VST session instead of only living in the global settings file.
+    setupButton(crtThemeButton, "SCOPE COLOR", false);
+    crtThemeButton.onClick = [this]() {
+        auto& skin = SkinManager::getInstance();
+        skin.cycleCRTTheme();
+        if (auto* p = audioProcessor.apvts.getParameter("crtTheme"))
+            p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(skin.getCRTTheme())));
+        oscilloscope.setTheme (static_cast<OscilloscopeComponent::Theme>(skin.getCRTTheme()));
+
+        const auto scopeText = juce::String ("SCOPE: ") + skin.getCRTThemeName();
+        if (crtThemeButton.getButtonText() != scopeText)
+            crtThemeButton.setButtonText (scopeText);
+
+        repaint();
+    };
+
     configureFocus(lcdScreen);
-    addAndMakeVisible(lcdScreen);
+    uiCanvas.addAndMakeVisible(lcdScreen);
     lcdScreen.triggerBoot();
 
     // ==========================================
@@ -273,6 +299,20 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     setupButton(subOscOctaveButton, "SUB -1/-2", true);
     attachButton(subOscOctaveButton, "subOctave");
 
+    // Sub oscillator waveform: Sine (default) or the classic Roland square.
+    setupButton(subOscWaveButton, "SUB WAVE", true);
+    subOscWaveButton.setClickingTogglesState(true);
+    subOscWaveButton.onClick = [this]() {
+        const bool sine = subOscWaveButton.getToggleState();
+
+        if (auto* p = audioProcessor.apvts.getParameter("subWaveform"))
+            p->setValueNotifyingHost(p->convertTo0to1(sine ? 1.0f : 0.0f));
+
+        updateSubWaveButton();
+        lcdScreen.setParameterEdit("SUB WAVE", sine ? "SINE" : "SQUARE", sine ? 1.0f : 0.0f);
+    };
+    updateSubWaveButton();
+
     setupRotaryKnob(noiseLevelSlider, noiseLevelLabel, "NOISE", 0.0, 1.0, 0.0);
     bindLock(noiseLevelSlider, Lock_NoiseLevel, "NOISE");
     attachSlider(noiseLevelSlider, "noiseLevel");
@@ -302,8 +342,8 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     bindLock(filterBalanceSlider, Lock_FilterBalance, "FILT BAL");
     attachSlider(filterBalanceSlider, "filterBalance");
 
-    f1CutoffSlider.setSkewFactorFromMidPoint(1000.0);
     setupRotaryKnob(f1CutoffSlider, f1CutoffLabel, "F1 CUTOFF", 20.0, 20000.0, 3000.0);
+    f1CutoffSlider.setSkewFactorFromMidPoint(1000.0);
     bindLock(f1CutoffSlider, Lock_LPFCutoff, "F1 CUTOFF");
     attachSlider(f1CutoffSlider, "lpfCutoff");
 
@@ -350,10 +390,12 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     // ==========================================
     oscilloscope.setQueue(&audioProcessor.oscilloscopeQueue);
     configureFocus(oscilloscope);
-    addAndMakeVisible(oscilloscope);
+    uiCanvas.addAndMakeVisible(oscilloscope);
 
     oscilloscope.onThemeChanged = [this](OscilloscopeComponent::Theme newTheme) {
         SkinManager::getInstance().setCRTTheme(static_cast<CRTTheme>(newTheme));
+        if (auto* p = audioProcessor.apvts.getParameter("crtTheme"))
+            p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(newTheme)));
         lcdScreen.setParameterEdit("CRT THEME", oscilloscope.getThemeName(), 1.0f);
     };
 
@@ -361,7 +403,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     // 6. Dynamic Vector ADSR LCD & Unified 4-Knob Deck
     // ==========================================
     configureFocus(envLcd);
-    addAndMakeVisible(envLcd);
+    uiCanvas.addAndMakeVisible(envLcd);
 
     setupButton(envPrevButton, "<", false);
     setupButton(envVcfTabButton, "VCF", true);
@@ -437,7 +479,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     auxModSectionLabel.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
     auxModSectionLabel.setJustificationType(juce::Justification::centred);
     configureFocus(auxModSectionLabel);
-    addAndMakeVisible(auxModSectionLabel);
+    uiCanvas.addAndMakeVisible(auxModSectionLabel);
 
     setupRotaryKnob(auxToPitchSlider, auxToPitchLabel, "> PITCH", -24.0, 24.0, 0.0, "", true);
     bindLock(auxToPitchSlider, Lock_AuxToPitch, "AUX > PITCH");
@@ -590,7 +632,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     setupButton(chordEnableButton, "CHORD", true);
     attachButton(chordEnableButton, "chordEnable");
 
-    addAndMakeVisible(seqLcd);
+    uiCanvas.addAndMakeVisible(seqLcd);
 
     seqLcd.onStepClicked = [this](int stepIdx) {
         selectedStepIndex = stepIdx;
@@ -608,7 +650,10 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     seqLcd.onStepGateChanged = [this](int stepIdx, float newGate) {
         auto& track = audioProcessor.sequencer.getActiveTrack();
         track.setStepGateLength(stepIdx, newGate);
-        stepGateSlider.setValue(newGate <= 0.0f ? 0.0 : newGate, juce::dontSendNotification);
+
+        if (stepIdx == selectedStepIndex)
+            stepGateSlider.setValue(newGate <= 0.0f ? 0.0 : newGate, juce::dontSendNotification);
+
         updateSequencerLcd();
     };
 
@@ -655,7 +700,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     currentStepLabel.setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Bold")));
     currentStepLabel.setJustificationType(juce::Justification::centred);
     configureFocus(currentStepLabel);
-    addAndMakeVisible(currentStepLabel);
+    uiCanvas.addAndMakeVisible(currentStepLabel);
 
     setupButton(nextStepButton, ">", false);
     nextStepButton.onClick = [this]() {
@@ -807,12 +852,12 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     keyboardComponent.setColour(juce::MidiKeyboardComponent::keySeparatorLineColourId, juce::Colour(0xff2d313a));
     keyboardComponent.setColour(juce::MidiKeyboardComponent::upDownButtonBackgroundColourId, juce::Colour(0xff0b0d10));
     keyboardComponent.setColour(juce::MidiKeyboardComponent::keyDownOverlayColourId, juce::Colour(0x6000f0ff));
-    addAndMakeVisible(keyboardComponent);
+    uiCanvas.addAndMakeVisible(keyboardComponent);
 
     // ==========================================
     // 12. Deep White-Box Eradication Sweep
     // ==========================================
-    for (auto* comp : getChildren())
+    for (auto* comp : uiCanvas.getChildren())
     {
         if (auto* slider = dynamic_cast<juce::Slider*>(comp))
         {
@@ -838,7 +883,14 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
         }
     }
 
-    setSize(UI_WIDTH, UI_HEIGHT);
+    // The console uses a fixed absolute layout, so the host must not resize it:
+    // a resized editor would leave every control at its hard-coded position.
+    setResizable (false, false);
+    setSize (UI_WIDTH, UI_HEIGHT);
+
+    // Shrink the whole console if the display cannot show it at 1:1.
+    applyFitScale();
+
     startTimerHz(30);
 
     refreshPresetList();
@@ -848,7 +900,52 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
 
 Simple116AudioProcessorEditor::~Simple116AudioProcessorEditor() {
     stopTimer();
+
+    // Leaving the editor must never leave the sequencer running: a reopened
+    // console has to come up with the transport stopped.
+    if (auto* pPlay = audioProcessor.apvts.getParameter("seqPlay"))
+        pPlay->setValueNotifyingHost(0.0f);
+    if (auto* pRec = audioProcessor.apvts.getParameter("seqRec"))
+        pRec->setValueNotifyingHost(0.0f);
+
+    audioProcessor.sequencer.isPlaying = false;
+    audioProcessor.sequencer.isRecording = false;
+
     setLookAndFeel(nullptr);
+}
+
+void Simple116AudioProcessorEditor::applyFitScale() {
+    const auto& displays = juce::Desktop::getInstance().getDisplays();
+    const auto* primary = displays.getPrimaryDisplay();
+
+    float scale = 1.0f;
+
+    if (primary != nullptr)
+    {
+        // Leave room for the window frame / title bar of the host window.
+        constexpr int marginW = 48;
+        constexpr int marginH = 96;
+
+        const auto usable = primary->userArea.withTrimmedRight (marginW).withTrimmedBottom (marginH);
+
+        if (usable.getWidth()  > 0) scale = std::min (scale, static_cast<float>(usable.getWidth())  / static_cast<float>(UI_WIDTH));
+        if (usable.getHeight() > 0) scale = std::min (scale, static_cast<float>(usable.getHeight()) / static_cast<float>(UI_HEIGHT));
+    }
+
+    scale = juce::jlimit (0.35f, 1.0f, scale);
+
+    if (approximatelyEqual (scale, uiScale))
+        return;
+
+    uiScale = scale;
+
+    // The canvas keeps its logical 1360x820 size; the transform does the scaling,
+    // which keeps every widget (and its font) pixel-accurate at any zoom level.
+    uiCanvas.setTransform (juce::AffineTransform::scale (uiScale));
+
+    isApplyingFitScale = true;
+    setSize (juce::roundToInt (UI_WIDTH * uiScale), juce::roundToInt (UI_HEIGHT * uiScale));
+    isApplyingFitScale = false;
 }
 
 // =============================================================================
@@ -1290,6 +1387,21 @@ void Simple116AudioProcessorEditor::updateSequencerLcd() noexcept {
     seqLcd.updateDisplayState(playhead, selectedStepIndex, page, trackId, isPlaying, bpmVal, syncState);
 }
 
+void Simple116AudioProcessorEditor::updateSubWaveButton() noexcept {
+    int wave = 1; // 0 = Square, 1 = Sine
+
+    if (auto* p = audioProcessor.apvts.getRawParameterValue("subWaveform"))
+        wave = static_cast<int>(p->load());
+
+    const bool sine = (wave != 0);
+
+    subOscWaveButton.setToggleState(sine, juce::dontSendNotification);
+
+    const auto text = sine ? juce::String ("SUB WAVE: SINE") : juce::String ("SUB WAVE: SQ");
+    if (subOscWaveButton.getButtonText() != text)
+        subOscWaveButton.setButtonText (text);
+}
+
 void Simple116AudioProcessorEditor::refreshSelectedStepUI() noexcept {
     const auto& track = audioProcessor.sequencer.getActiveTrack();
     const auto& step = track.getStep(selectedStepIndex);
@@ -1377,9 +1489,10 @@ void Simple116AudioProcessorEditor::timerCallback() {
 
     updateEnvelopeLcd();
 
-    int guiT = 0, ledT = 0;
+    int guiT = 0, ledT = 0, crtT = 0;
     if (auto* pGui = audioProcessor.apvts.getRawParameterValue("guiTheme")) guiT = static_cast<int>(pGui->load());
     if (auto* pLed = audioProcessor.apvts.getRawParameterValue("ledTheme")) ledT = static_cast<int>(pLed->load());
+    if (auto* pCrt = audioProcessor.apvts.getRawParameterValue("crtTheme")) crtT = static_cast<int>(pCrt->load());
 
     if (static_cast<int>(skin.getChassisTheme()) != guiT || static_cast<int>(skin.getLEDTheme()) != ledT) {
         skin.setChassisTheme(static_cast<ChassisTheme>(guiT));
@@ -1387,10 +1500,19 @@ void Simple116AudioProcessorEditor::timerCallback() {
         repaint();
     }
 
-    // Keep oscilloscope theme synchronized with persistent settings
-    if (static_cast<int>(oscilloscope.getTheme()) != static_cast<int>(skin.getCRTTheme())) {
-        oscilloscope.setTheme(static_cast<OscilloscopeComponent::Theme>(skin.getCRTTheme()));
+    // Keep oscilloscope theme synchronized with the (session persistent) parameter
+    if (static_cast<int>(oscilloscope.getTheme()) != crtT) {
+        skin.setCRTTheme(static_cast<CRTTheme>(crtT));
+        oscilloscope.setTheme(static_cast<OscilloscopeComponent::Theme>(crtT));
     }
+
+    const auto scopeText = juce::String ("SCOPE: ") + skin.getCRTThemeName();
+    if (crtThemeButton.getButtonText() != scopeText)
+        crtThemeButton.setButtonText (scopeText);
+
+    // The sub waveform belongs to the edited part, so it has to follow a
+    // part switch as well.
+    updateSubWaveButton();
 
     const int numActivePages = audioProcessor.sequencer.getNumPages();
 
@@ -1433,7 +1555,9 @@ void Simple116AudioProcessorEditor::attachSlider(juce::Slider& slider, const juc
         }
         else if (paramId.containsIgnoreCase("internalBpm"))
         {
-            slider.textFromValueFunction = [](double val) { return juce::String(val, 1) + " BPM"; };
+            // The knob label underneath already says "BPM": repeating it here used
+            // to overflow the 44px text box and JUCE elided it to "128.0...".
+            slider.textFromValueFunction = [](double val) { return juce::String (val, 1); };
         }
         else if (paramId.containsIgnoreCase("sustain") || paramId.containsIgnoreCase("mix") ||
                  paramId.containsIgnoreCase("depth") || paramId.containsIgnoreCase("level") ||
@@ -1523,7 +1647,7 @@ void Simple116AudioProcessorEditor::setupRotaryKnob(juce::Slider& slider, juce::
     };
 
     configureFocus(slider);
-    addAndMakeVisible(slider);
+    uiCanvas.addAndMakeVisible(slider);
 
     label.setText(text, juce::dontSendNotification);
     label.setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Bold")));
@@ -1532,7 +1656,7 @@ void Simple116AudioProcessorEditor::setupRotaryKnob(juce::Slider& slider, juce::
     label.setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
     label.setOpaque(false);
     configureFocus(label);
-    addAndMakeVisible(label);
+    uiCanvas.addAndMakeVisible(label);
 }
 
 void Simple116AudioProcessorEditor::setupLinearFader(juce::Slider& slider, juce::Label& label,
@@ -1556,7 +1680,7 @@ void Simple116AudioProcessorEditor::setupLinearFader(juce::Slider& slider, juce:
     };
 
     configureFocus(slider);
-    addAndMakeVisible(slider);
+    uiCanvas.addAndMakeVisible(slider);
 
     label.setText(text, juce::dontSendNotification);
     label.setFont(juce::Font(juce::FontOptions(9.5f).withStyle("Bold")));
@@ -1565,14 +1689,14 @@ void Simple116AudioProcessorEditor::setupLinearFader(juce::Slider& slider, juce:
     label.setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
     label.setOpaque(false);
     configureFocus(label);
-    addAndMakeVisible(label);
+    uiCanvas.addAndMakeVisible(label);
 }
 
 void Simple116AudioProcessorEditor::setupButton(juce::Button& button, const juce::String& text, bool isToggleable) {
     button.setButtonText(text);
     button.setClickingTogglesState(isToggleable);
     configureFocus(button);
-    addAndMakeVisible(button);
+    uiCanvas.addAndMakeVisible(button);
 }
 
 void Simple116AudioProcessorEditor::setupComboBox(juce::ComboBox& box, juce::Label& label,
@@ -1581,7 +1705,7 @@ void Simple116AudioProcessorEditor::setupComboBox(juce::ComboBox& box, juce::Lab
     box.addItemList(items, 1);
     box.setSelectedId(defaultId, juce::dontSendNotification);
     configureFocus(box);
-    addAndMakeVisible(box);
+    uiCanvas.addAndMakeVisible(box);
 
     label.setText(text, juce::dontSendNotification);
     label.setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Bold")));
@@ -1590,7 +1714,7 @@ void Simple116AudioProcessorEditor::setupComboBox(juce::ComboBox& box, juce::Lab
     label.setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
     label.setOpaque(false);
     configureFocus(label);
-    addAndMakeVisible(label);
+    uiCanvas.addAndMakeVisible(label);
 }
 
 void Simple116AudioProcessorEditor::drawSectionPanel(juce::Graphics& g, const juce::Rectangle<float>& bounds,
@@ -1616,9 +1740,16 @@ void Simple116AudioProcessorEditor::drawSectionPanel(juce::Graphics& g, const ju
 }
 
 void Simple116AudioProcessorEditor::paint(juce::Graphics& g) {
+    // The chassis artwork is painted by the canvas child (so that it scales with
+    // the rest of the console); the editor itself only provides the backdrop.
+    g.setColour(SkinManager::getInstance().getChassisBackgroundColour());
+    g.fillRect(getLocalBounds());
+}
+
+void Simple116AudioProcessorEditor::paintChassis(juce::Graphics& g) {
     auto& skin = SkinManager::getInstance();
     const auto ledCol = skin.getLEDColour();
-    const auto bounds = getLocalBounds().toFloat();
+    const auto bounds = uiCanvas.getLocalBounds().toFloat();
 
     if (skin.hasCustomBackground()) {
         g.drawImage(skin.getCustomBackground(), bounds);
@@ -1680,6 +1811,9 @@ void Simple116AudioProcessorEditor::paint(juce::Graphics& g) {
 }
 
 void Simple116AudioProcessorEditor::resized() {
+    // The canvas keeps its logical 1360x820 size; the transform scales it.
+    uiCanvas.setBounds (0, 0, UI_WIDTH, UI_HEIGHT);
+
     titleBadgeLabel.setBounds(12, 10, 100, 34);
 
     prevPresetButton.setBounds(116, 14, 26, 26);
@@ -1741,6 +1875,7 @@ void Simple116AudioProcessorEditor::resized() {
     subOscLevelLabel.setBounds(76, 306, 52, 14);
 
     subOscOctaveButton.setBounds(132, 269, 58, 24);
+    subOscWaveButton.setBounds(76, 322, 114, 22);
 
     noiseLevelSlider.setBounds(194, 256, 52, 50);
     noiseLevelLabel.setBounds(194, 306, 52, 14);
@@ -1791,7 +1926,8 @@ void Simple116AudioProcessorEditor::resized() {
     f2KeyTrackSlider.setBounds(828, 230, 58, 48);
     f2KeyTrackLabel.setBounds(828, 278, 58, 14);
 
-    oscilloscope.setBounds(1082, 88, 258, 252);
+    oscilloscope.setBounds(1082, 88, 258, 232);
+    crtThemeButton.setBounds(1082, 324, 258, 20);
 
     // Vector ADSR Layout
     envPrevButton.setBounds(18, 384, 22, 22);
@@ -1958,4 +2094,19 @@ void Simple116AudioProcessorEditor::resized() {
     keyboardComponent.setLowestVisibleKey(36);
     keyboardComponent.setKeyWidth(1240.0f / 36.0f);
     keyboardComponent.setScrollButtonsVisible(false);
+
+    if (! isApplyingFitScale)
+    {
+        // A host driven resize: keep the console fully visible by scaling it to
+        // whatever space the host gave us.
+        const float fitW = static_cast<float>(getWidth())  / static_cast<float>(UI_WIDTH);
+        const float fitH = static_cast<float>(getHeight()) / static_cast<float>(UI_HEIGHT);
+        const float fit  = juce::jlimit (0.35f, 1.0f, std::min (fitW, fitH));
+
+        if (! approximatelyEqual (fit, uiScale))
+        {
+            uiScale = fit;
+            uiCanvas.setTransform (juce::AffineTransform::scale (uiScale));
+        }
+    }
 }
