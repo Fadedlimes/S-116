@@ -52,6 +52,19 @@ juce_generate_juce_header(Simple116)
 # ==============================================================================
 # 4. Source Files (Complete Engine, UI, DSP & Expansion Card System)
 # ==============================================================================
+set(S116_FONT_DIR ${CMAKE_SOURCE_DIR}/Source/Resources/Fonts)
+if(EXISTS ${S116_FONT_DIR}/BarlowCondensed-Bold.ttf AND EXISTS ${S116_FONT_DIR}/ShareTechMono-Regular.ttf)
+    juce_add_binary_data(S116Fonts SOURCES ${S116_FONT_DIR}/BarlowCondensed-Bold.ttf ${S116_FONT_DIR}/ShareTechMono-Regular.ttf)
+    target_link_libraries(Simple116 PRIVATE S116Fonts)
+    target_compile_definitions(Simple116 PRIVATE S116_HAS_FONTS=1)
+endif()
+option (S116_SNAPSHOTS "Generate debug snapshots" OFF)
+if (S116_SNAPSHOTS)
+    target_compile_definitions (Simple116 PRIVATE S116_SNAPSHOTS=1)
+endif()
+
+
+
 target_sources(Simple116 PRIVATE
     # Processor & Editor Core
     Source/PluginProcessor.cpp
@@ -84,6 +97,8 @@ target_sources(Simple116 PRIVATE
 # ==============================================================================
 # 5. Include Directories
 # ==============================================================================
+target_compile_definitions (Simple116 PRIVATE JUCE_MODAL_LOOPS_PERMITTED=1)
+
 target_include_directories(Simple116 PRIVATE
     Source
     Source/DSP

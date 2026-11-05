@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include <cstdlib>
 
 namespace
 {
@@ -82,16 +83,43 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
       keyboardComponent(processor.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
 {
     setLookAndFeel(&studioLookAndFeel);
+    S116::skin().addChangeListener(this);
     configureFocus(*this);
 
-    // The console is a fixed 1360x820 canvas. Everything is parented to a single
-    // canvas component so the whole UI can be scaled down uniformly on displays
-    // that are too small to show it at 1:1 (common on Linux laptops).
-    uiCanvas.setBounds(0, 0, UI_WIDTH, UI_HEIGHT);
-    uiCanvas.setWantsKeyboardFocus(false);
-    uiCanvas.setMouseClickGrabsKeyboardFocus(false);
-    uiCanvas.onPaint = [this](juce::Graphics& g) { paintChassis(g); };
-    addAndMakeVisible(uiCanvas);
+#if S116_HAS_FONTS
+    S116::skin().setTypefaces (
+        juce::Typeface::createSystemTypefaceFor (BinaryData::BarlowCondensedBold_ttf, BinaryData::BarlowCondensedBold_ttfSize),
+        juce::Typeface::createSystemTypefaceFor (BinaryData::ShareTechMonoRegular_ttf, BinaryData::ShareTechMonoRegular_ttfSize));
+    jassert (S116::skin().theme().name.isNotEmpty());
+#else
+    DBG ("S116: Font files not found in Source/Resources/Fonts/ - using system fonts");
+#endif
+
+    // The S-116 design canvas is 1920 x 1500. Everything is parented to content.
+    content.setBounds(0, 0, 1920, 1500);
+    content.setWantsKeyboardFocus(false);
+    content.setMouseClickGrabsKeyboardFocus(false);
+    addAndMakeVisible(content);
+
+    // Add chassis background and panels as first children (behind everything)
+    content.addAndMakeVisible(chassisBg);
+    chassisBg.setBounds(0, 0, 1920, 1500);
+    content.addAndMakeVisible(headerBar);
+    headerBar.setBounds(36, 14, 1848, 72);
+    content.addAndMakeVisible(oscPanel);
+    oscPanel.setBounds(36, 100, 830, 592);
+    content.addAndMakeVisible(filtPanel);
+    filtPanel.setBounds(878, 100, 560, 592);
+    content.addAndMakeVisible(scopePanel);
+    scopePanel.setBounds(1450, 100, 434, 592);
+    content.addAndMakeVisible(envPanel);
+    envPanel.setBounds(36, 706, 700, 570);
+    content.addAndMakeVisible(lfoPanel);
+    lfoPanel.setBounds(748, 706, 480, 570);
+    content.addAndMakeVisible(seqPanel);
+    seqPanel.setBounds(1240, 706, 644, 570);
+    content.addAndMakeVisible(fxPanel);
+    fxPanel.setBounds(36, 1290, 1848, 190);
 
     // ==========================================
     // 1. Header Bar Controls
@@ -100,7 +128,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     titleBadgeLabel.setFont(juce::Font(juce::FontOptions(20.0f).withStyle("Bold")));
     titleBadgeLabel.setJustificationType(juce::Justification::centred);
     configureFocus(titleBadgeLabel);
-    uiCanvas.addAndMakeVisible(titleBadgeLabel);
+    content.addAndMakeVisible(titleBadgeLabel);
 
     setupComboBox(presetComboBox, presetLabel, "PRESET", { "Init Patch" }, 1);
     setupButton(prevPresetButton, "<", false);
@@ -175,6 +203,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     chassisThemeButton.onClick = [this]() {
         auto& skin = SkinManager::getInstance();
         skin.cycleChassisTheme();
+        S116::skin().refreshLed();
         if (auto* p = audioProcessor.apvts.getParameter("guiTheme"))
             p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(skin.getChassisTheme())));
         repaint();
@@ -184,6 +213,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     ledThemeButton.onClick = [this]() {
         auto& skin = SkinManager::getInstance();
         skin.cycleLEDTheme();
+        S116::skin().refreshLed();
         if (auto* p = audioProcessor.apvts.getParameter("ledTheme"))
             p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(skin.getLEDTheme())));
         repaint();
@@ -198,6 +228,8 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
         if (auto* p = audioProcessor.apvts.getParameter("crtTheme"))
             p->setValueNotifyingHost(p->convertTo0to1(static_cast<float>(skin.getCRTTheme())));
         oscilloscope.setTheme (static_cast<OscilloscopeComponent::Theme>(skin.getCRTTheme()));
+        scopeFrame.setPhosphor (oscilloscope.getThemeColor());
+        scopeFrame.setLabels ("S-116 CRT // " + skin.getCRTThemeName(), "ZOOM 1.00x");
 
         const auto scopeText = juce::String ("SCOPE: ") + skin.getCRTThemeName();
         if (crtThemeButton.getButtonText() != scopeText)
@@ -207,7 +239,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     };
 
     configureFocus(lcdScreen);
-    uiCanvas.addAndMakeVisible(lcdScreen);
+    content.addAndMakeVisible(lcdScreen);
     lcdScreen.triggerBoot();
 
     // ==========================================
@@ -245,6 +277,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     attachSlider(octaveSlider, "dco1Octave");
 
     setupRotaryKnob(oscMorphSlider, oscMorphLabel, "D1 MORPH", 0.0, 1.0, 0.25);
+    oscMorphSlider.getProperties().set ("morph", true);
     bindLock(oscMorphSlider, Lock_DCO1Morph, "D1 MORPH");
     attachSlider(oscMorphSlider, "dco1Morph");
 
@@ -265,6 +298,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
 
     // Row 2: DCO 2 Controls
     setupRotaryKnob(dco2MorphSlider, dco2MorphLabel, "D2 MORPH", 0.0, 1.0, 0.50);
+    dco2MorphSlider.getProperties().set ("morph", true);
     bindLock(dco2MorphSlider, Lock_DCO2Morph, "D2 MORPH");
     attachSlider(dco2MorphSlider, "dco2Morph");
 
@@ -284,6 +318,18 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     attachSlider(fmAmountSlider, "xmodAmount");
 
     setupRotaryKnob(dco2FoldSlider, dco2FoldLabel, "D2 FOLD", 0.0, 1.0, 0.0);
+    octaveSlider.getProperties().set ("halo", 34);
+    oscMorphSlider.getProperties().set ("halo", 34);
+    oscPWMSlider.getProperties().set ("halo", 34);
+    supersawMixSlider.getProperties().set ("halo", 34);
+    supersawDetuneSlider.getProperties().set ("halo", 34);
+    wavefoldSlider.getProperties().set ("halo", 34);
+    dco2MorphSlider.getProperties().set ("halo", 34);
+    dco2PWMSlider.getProperties().set ("halo", 34);
+    semiTuneSlider.getProperties().set ("halo", 34);
+    fineTuneSlider.getProperties().set ("halo", 34);
+    fmAmountSlider.getProperties().set ("halo", 34);
+    dco2FoldSlider.getProperties().set ("halo", 34);;
     attachSlider(dco2FoldSlider, "dco2Fold");
 
     // Row 3: Mixer, Sub, Noise & Glide Deck
@@ -390,7 +436,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     // ==========================================
     oscilloscope.setQueue(&audioProcessor.oscilloscopeQueue);
     configureFocus(oscilloscope);
-    uiCanvas.addAndMakeVisible(oscilloscope);
+    content.addAndMakeVisible(oscilloscope);
 
     oscilloscope.onThemeChanged = [this](OscilloscopeComponent::Theme newTheme) {
         SkinManager::getInstance().setCRTTheme(static_cast<CRTTheme>(newTheme));
@@ -403,7 +449,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     // 6. Dynamic Vector ADSR LCD & Unified 4-Knob Deck
     // ==========================================
     configureFocus(envLcd);
-    uiCanvas.addAndMakeVisible(envLcd);
+    content.addAndMakeVisible(envLcd);
 
     setupButton(envPrevButton, "<", false);
     setupButton(envVcfTabButton, "VCF", true);
@@ -479,7 +525,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     auxModSectionLabel.setFont(juce::Font(juce::FontOptions(9.0f).withStyle("Bold")));
     auxModSectionLabel.setJustificationType(juce::Justification::centred);
     configureFocus(auxModSectionLabel);
-    uiCanvas.addAndMakeVisible(auxModSectionLabel);
+    content.addAndMakeVisible(auxModSectionLabel);
 
     setupRotaryKnob(auxToPitchSlider, auxToPitchLabel, "> PITCH", -24.0, 24.0, 0.0, "", true);
     bindLock(auxToPitchSlider, Lock_AuxToPitch, "AUX > PITCH");
@@ -632,7 +678,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     setupButton(chordEnableButton, "CHORD", true);
     attachButton(chordEnableButton, "chordEnable");
 
-    uiCanvas.addAndMakeVisible(seqLcd);
+    content.addAndMakeVisible(seqLcd);
 
     seqLcd.onStepClicked = [this](int stepIdx) {
         selectedStepIndex = stepIdx;
@@ -700,7 +746,7 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     currentStepLabel.setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Bold")));
     currentStepLabel.setJustificationType(juce::Justification::centred);
     configureFocus(currentStepLabel);
-    uiCanvas.addAndMakeVisible(currentStepLabel);
+    content.addAndMakeVisible(currentStepLabel);
 
     setupButton(nextStepButton, ">", false);
     nextStepButton.onClick = [this]() {
@@ -852,12 +898,12 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
     keyboardComponent.setColour(juce::MidiKeyboardComponent::keySeparatorLineColourId, juce::Colour(0xff2d313a));
     keyboardComponent.setColour(juce::MidiKeyboardComponent::upDownButtonBackgroundColourId, juce::Colour(0xff0b0d10));
     keyboardComponent.setColour(juce::MidiKeyboardComponent::keyDownOverlayColourId, juce::Colour(0x6000f0ff));
-    uiCanvas.addAndMakeVisible(keyboardComponent);
+    content.addAndMakeVisible(keyboardComponent);
 
     // ==========================================
     // 12. Deep White-Box Eradication Sweep
     // ==========================================
-    for (auto* comp : uiCanvas.getChildren())
+    for (auto* comp : content.getChildren())
     {
         if (auto* slider = dynamic_cast<juce::Slider*>(comp))
         {
@@ -883,14 +929,61 @@ Simple116AudioProcessorEditor::Simple116AudioProcessorEditor(Simple106AudioProce
         }
     }
 
-    // The console uses a fixed absolute layout, so the host must not resize it:
-    // a resized editor would leave every control at its hard-coded position.
-    setResizable (false, false);
-    setSize (UI_WIDTH, UI_HEIGHT);
+    setResizable (true, true);
+    setResizeLimits (960, 750, 1920, 1500);
+    getConstrainer()->setFixedAspectRatio (1920.0 / 1500.0);
+    setSize (1440, 1125);
 
-    // Shrink the whole console if the display cannot show it at 1:1.
-    applyFitScale();
+    if (std::getenv ("S116_SELFTEST") != nullptr)
+        juce::Timer::callAfterDelay (1500, [safe = juce::Component::SafePointer<Simple116AudioProcessorEditor> (this)]
+                                     { if (safe != nullptr) safe->runSelfTest(); });
 
+    DBG ("CONSTRUCTOR DONE");
+    scopeFrame.setPhosphor (oscilloscope.getThemeColor());
+    scopeFrame.setLabels ("S-116 CRT // " + SkinManager::getInstance().getCRTThemeName(), "ZOOM 1.00x");
+
+#if S116_SNAPSHOTS
+    // Snapshot generation (debug mode)
+    juce::File snapDir (juce::File::getSpecialLocation (juce::File::userHomeDirectory).getChildFile ("s116-snaps"));
+    snapDir.createDirectory();
+    setSize (1920, 1500);
+    for (int ti = 0; ti < 4; ++ti)
+    {
+        SkinManager::getInstance().setChassisTheme (static_cast<ChassisTheme> (ti));
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+        auto img = createComponentSnapshot (getLocalBounds(), true, 1.0f);
+        juce::PNGImageFormat png;
+        juce::FileOutputStream os (snapDir.getChildFile ("chassis_" + juce::String (ti) + "_" + S116::skin().theme().name + "_full.png"));
+        if (os.openedOk()) png.writeImageToStream (img, os);
+    }
+    // Silver button crop (enlarged)
+    {
+        SkinManager::getInstance().setChassisTheme (ChassisTheme::VintageCream);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+        // find a button to crop: use chassisThemeButton
+        auto bnds = chassisThemeButton.getBounds();
+        auto img = chassisThemeButton.createComponentSnapshot (chassisThemeButton.getLocalBounds(), true, 4.0f);
+        juce::PNGImageFormat png;
+        juce::FileOutputStream os (snapDir.getChildFile ("silver_button_crop.png"));
+        if (os.openedOk()) png.writeImageToStream (img, os);
+    }
+    // Graphite with two different LED colours
+    {
+        SkinManager::getInstance().setChassisTheme (ChassisTheme::DarkGraphite);
+        for (int li : { 0, 2 }) // Cyan, Amber
+        {
+            SkinManager::getInstance().setLEDTheme (static_cast<LEDTheme> (li));
+            S116::skin().refreshLed();
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
+            auto img = createComponentSnapshot (getLocalBounds(), true, 1.0f);
+            juce::PNGImageFormat png;
+            juce::FileOutputStream os (snapDir.getChildFile ("graphite_led" + juce::String (li) + "_" + SkinManager::getInstance().getLEDThemeName (static_cast<LEDTheme> (li)) + "_full.png"));
+            if (os.openedOk()) png.writeImageToStream (img, os);
+        }
+    }
+    DBG ("Snapshots written to " + snapDir.getFullPathName());
+#endif
+    S116::skin().refreshLed();
     startTimerHz(30);
 
     refreshPresetList();
@@ -911,6 +1004,7 @@ Simple116AudioProcessorEditor::~Simple116AudioProcessorEditor() {
     audioProcessor.sequencer.isPlaying = false;
     audioProcessor.sequencer.isRecording = false;
 
+    S116::skin().removeChangeListener(this);
     setLookAndFeel(nullptr);
 }
 
@@ -939,13 +1033,8 @@ void Simple116AudioProcessorEditor::applyFitScale() {
 
     uiScale = scale;
 
-    // The canvas keeps its logical 1360x820 size; the transform does the scaling,
-    // which keeps every widget (and its font) pixel-accurate at any zoom level.
-    uiCanvas.setTransform (juce::AffineTransform::scale (uiScale));
-
-    isApplyingFitScale = true;
-    setSize (juce::roundToInt (UI_WIDTH * uiScale), juce::roundToInt (UI_HEIGHT * uiScale));
-    isApplyingFitScale = false;
+    // The canvas keeps its logical 1920x1500 size; the transform does the scaling.
+    content.setTransform (juce::AffineTransform::scale (uiScale));
 }
 
 // =============================================================================
@@ -973,12 +1062,16 @@ void Simple116AudioProcessorEditor::setActiveEnvelope(int envIndex)
     envSustainAttachment.reset();
     envReleaseAttachment.reset();
 
+    DBG ("ATTACH ENV: " + attId);
     if (audioProcessor.apvts.getParameter(attId) != nullptr)
         envAttackAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, attId, envAttackSlider);
+    DBG ("ATTACH ENV: " + decId);
     if (audioProcessor.apvts.getParameter(decId) != nullptr)
         envDecayAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, decId, envDecaySlider);
+    DBG ("ATTACH ENV: " + susId);
     if (audioProcessor.apvts.getParameter(susId) != nullptr)
         envSustainAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, susId, envSustainSlider);
+    DBG ("ATTACH ENV: " + relId);
     if (audioProcessor.apvts.getParameter(relId) != nullptr)
         envReleaseAttachment = std::make_unique<SliderAttachment>(audioProcessor.apvts, relId, envReleaseSlider);
 
@@ -1497,6 +1590,7 @@ void Simple116AudioProcessorEditor::timerCallback() {
     if (static_cast<int>(skin.getChassisTheme()) != guiT || static_cast<int>(skin.getLEDTheme()) != ledT) {
         skin.setChassisTheme(static_cast<ChassisTheme>(guiT));
         skin.setLEDTheme(static_cast<LEDTheme>(ledT));
+        S116::skin().refreshLed();
         repaint();
     }
 
@@ -1504,6 +1598,8 @@ void Simple116AudioProcessorEditor::timerCallback() {
     if (static_cast<int>(oscilloscope.getTheme()) != crtT) {
         skin.setCRTTheme(static_cast<CRTTheme>(crtT));
         oscilloscope.setTheme(static_cast<OscilloscopeComponent::Theme>(crtT));
+        scopeFrame.setPhosphor (oscilloscope.getThemeColor());
+        scopeFrame.setLabels ("S-116 CRT // " + SkinManager::getInstance().getCRTThemeName(), "ZOOM 1.00x");
     }
 
     const auto scopeText = juce::String ("SCOPE: ") + skin.getCRTThemeName();
@@ -1538,6 +1634,7 @@ void Simple116AudioProcessorEditor::timerCallback() {
 }
 
 void Simple116AudioProcessorEditor::attachSlider(juce::Slider& slider, const juce::String& paramId) {
+    DBG ("ATTACH SLIDER: " + paramId);
     if (audioProcessor.apvts.getParameter(paramId) != nullptr)
     {
         sliderAttachments.push_back(std::make_unique<SliderAttachment>(audioProcessor.apvts, paramId, slider));
@@ -1614,11 +1711,13 @@ void Simple116AudioProcessorEditor::attachSlider(juce::Slider& slider, const juc
 }
 
 void Simple116AudioProcessorEditor::attachComboBox(juce::ComboBox& box, const juce::String& paramId) {
+    DBG ("ATTACH COMBO: " + paramId);
     if (audioProcessor.apvts.getParameter(paramId) != nullptr)
         comboBoxAttachments.push_back(std::make_unique<ComboBoxAttachment>(audioProcessor.apvts, paramId, box));
 }
 
 void Simple116AudioProcessorEditor::attachButton(juce::Button& button, const juce::String& paramId) {
+    DBG ("ATTACH BUTTON: " + paramId);
     if (audioProcessor.apvts.getParameter(paramId) != nullptr)
         buttonAttachments.push_back(std::make_unique<ButtonAttachment>(audioProcessor.apvts, paramId, button));
 }
@@ -1647,7 +1746,7 @@ void Simple116AudioProcessorEditor::setupRotaryKnob(juce::Slider& slider, juce::
     };
 
     configureFocus(slider);
-    uiCanvas.addAndMakeVisible(slider);
+    content.addAndMakeVisible(slider);
 
     label.setText(text, juce::dontSendNotification);
     label.setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Bold")));
@@ -1656,7 +1755,7 @@ void Simple116AudioProcessorEditor::setupRotaryKnob(juce::Slider& slider, juce::
     label.setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
     label.setOpaque(false);
     configureFocus(label);
-    uiCanvas.addAndMakeVisible(label);
+    content.addAndMakeVisible(label);
 }
 
 void Simple116AudioProcessorEditor::setupLinearFader(juce::Slider& slider, juce::Label& label,
@@ -1680,7 +1779,7 @@ void Simple116AudioProcessorEditor::setupLinearFader(juce::Slider& slider, juce:
     };
 
     configureFocus(slider);
-    uiCanvas.addAndMakeVisible(slider);
+    content.addAndMakeVisible(slider);
 
     label.setText(text, juce::dontSendNotification);
     label.setFont(juce::Font(juce::FontOptions(9.5f).withStyle("Bold")));
@@ -1689,14 +1788,14 @@ void Simple116AudioProcessorEditor::setupLinearFader(juce::Slider& slider, juce:
     label.setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
     label.setOpaque(false);
     configureFocus(label);
-    uiCanvas.addAndMakeVisible(label);
+    content.addAndMakeVisible(label);
 }
 
 void Simple116AudioProcessorEditor::setupButton(juce::Button& button, const juce::String& text, bool isToggleable) {
     button.setButtonText(text);
     button.setClickingTogglesState(isToggleable);
     configureFocus(button);
-    uiCanvas.addAndMakeVisible(button);
+    content.addAndMakeVisible(button);
 }
 
 void Simple116AudioProcessorEditor::setupComboBox(juce::ComboBox& box, juce::Label& label,
@@ -1705,7 +1804,7 @@ void Simple116AudioProcessorEditor::setupComboBox(juce::ComboBox& box, juce::Lab
     box.addItemList(items, 1);
     box.setSelectedId(defaultId, juce::dontSendNotification);
     configureFocus(box);
-    uiCanvas.addAndMakeVisible(box);
+    content.addAndMakeVisible(box);
 
     label.setText(text, juce::dontSendNotification);
     label.setFont(juce::Font(juce::FontOptions(10.0f).withStyle("Bold")));
@@ -1714,7 +1813,7 @@ void Simple116AudioProcessorEditor::setupComboBox(juce::ComboBox& box, juce::Lab
     label.setColour(juce::Label::outlineColourId, juce::Colours::transparentBlack);
     label.setOpaque(false);
     configureFocus(label);
-    uiCanvas.addAndMakeVisible(label);
+    content.addAndMakeVisible(label);
 }
 
 void Simple116AudioProcessorEditor::drawSectionPanel(juce::Graphics& g, const juce::Rectangle<float>& bounds,
@@ -1740,16 +1839,13 @@ void Simple116AudioProcessorEditor::drawSectionPanel(juce::Graphics& g, const ju
 }
 
 void Simple116AudioProcessorEditor::paint(juce::Graphics& g) {
-    // The chassis artwork is painted by the canvas child (so that it scales with
-    // the rest of the console); the editor itself only provides the backdrop.
-    g.setColour(SkinManager::getInstance().getChassisBackgroundColour());
-    g.fillRect(getLocalBounds());
+    juce::ignoreUnused (g);
 }
 
 void Simple116AudioProcessorEditor::paintChassis(juce::Graphics& g) {
     auto& skin = SkinManager::getInstance();
     const auto ledCol = skin.getLEDColour();
-    const auto bounds = uiCanvas.getLocalBounds().toFloat();
+    const auto bounds = content.getLocalBounds().toFloat();
 
     if (skin.hasCustomBackground()) {
         g.drawImage(skin.getCustomBackground(), bounds);
@@ -1811,302 +1907,284 @@ void Simple116AudioProcessorEditor::paintChassis(juce::Graphics& g) {
 }
 
 void Simple116AudioProcessorEditor::resized() {
-    // The canvas keeps its logical 1360x820 size; the transform scales it.
-    uiCanvas.setBounds (0, 0, UI_WIDTH, UI_HEIGHT);
-
-    titleBadgeLabel.setBounds(12, 10, 100, 34);
-
-    prevPresetButton.setBounds(116, 14, 26, 26);
-    presetComboBox.setBounds(144, 14, 154, 26);
-    nextPresetButton.setBounds(300, 14, 26, 26);
-    savePresetButton.setBounds(328, 14, 46, 26);
-    initPresetButton.setBounds(376, 14, 40, 26);
-    cardButton.setBounds(418, 14, 56, 26);
-
-    voiceModeComboBox.setBounds(478, 14, 134, 26);
-    masterVolumeSlider.setBounds(618, 6, 60, 44);
-
-    chassisThemeButton.setBounds(684, 14, 78, 26);
-    ledThemeButton.setBounds(764, 14, 84, 26);
-
-    lcdScreen.setBounds(854, 8, 494, 38);
-
-    // Oscillators Layout
-    octaveSlider.setBounds(30, 92, 54, 50);
-    octaveLabel.setBounds(30, 142, 54, 14);
-
-    oscMorphSlider.setBounds(118, 92, 54, 50);
-    oscMorphLabel.setBounds(118, 142, 54, 14);
-
-    oscPWMSlider.setBounds(206, 92, 54, 50);
-    oscPWMLabel.setBounds(206, 142, 54, 14);
-
-    supersawMixSlider.setBounds(294, 92, 54, 50);
-    supersawMixLabel.setBounds(294, 142, 54, 14);
-
-    supersawDetuneSlider.setBounds(382, 92, 54, 50);
-    supersawDetuneLabel.setBounds(382, 142, 54, 14);
-
-    wavefoldSlider.setBounds(470, 92, 54, 50);
-    wavefoldLabel.setBounds(470, 142, 54, 14);
-
-    dco2MorphSlider.setBounds(30, 172, 54, 50);
-    dco2MorphLabel.setBounds(30, 222, 54, 14);
-
-    dco2PWMSlider.setBounds(118, 172, 54, 50);
-    dco2PWMLabel.setBounds(118, 222, 54, 14);
-
-    semiTuneSlider.setBounds(206, 172, 54, 50);
-    semiTuneLabel.setBounds(206, 222, 54, 14);
-
-    fineTuneSlider.setBounds(294, 172, 54, 50);
-    fineTuneLabel.setBounds(294, 222, 54, 14);
-
-    fmAmountSlider.setBounds(382, 172, 54, 50);
-    fmAmountLabel.setBounds(382, 222, 54, 14);
-
-    dco2FoldSlider.setBounds(470, 172, 54, 50);
-    dco2FoldLabel.setBounds(470, 222, 54, 14);
-
-    dco2LevelSlider.setBounds(20, 256, 52, 50);
-    dco2LevelLabel.setBounds(20, 306, 52, 14);
-
-    subOscLevelSlider.setBounds(76, 256, 52, 50);
-    subOscLevelLabel.setBounds(76, 306, 52, 14);
-
-    subOscOctaveButton.setBounds(132, 269, 58, 24);
-    subOscWaveButton.setBounds(76, 322, 114, 22);
-
-    noiseLevelSlider.setBounds(194, 256, 52, 50);
-    noiseLevelLabel.setBounds(194, 306, 52, 14);
-
-    supersawModeButton.setBounds(250, 269, 68, 24);
-
-    glideTimeSlider.setBounds(322, 256, 52, 50);
-    glideTimeLabel.setBounds(322, 306, 52, 14);
-
-    glideEnableButton.setBounds(378, 269, 66, 24);
-    legatoModeButton.setBounds(448, 269, 66, 24);
-
-    // Filters Layout
-    filterRoutingButton.setBounds(562, 92, 86, 24);
-    filterBalanceSlider.setBounds(656, 84, 58, 48);
-    filterBalanceLabel.setBounds(656, 132, 58, 14);
-
-    f1CutoffSlider.setBounds(562, 154, 58, 56);
-    f1CutoffLabel.setBounds(562, 210, 58, 14);
-
-    f1ResonanceSlider.setBounds(628, 154, 56, 56);
-    f1ResonanceLabel.setBounds(628, 210, 56, 14);
-
-    f1HPFSlider.setBounds(692, 154, 56, 56);
-    f1HPFLabel.setBounds(692, 210, 56, 14);
-
-    f1EnvDepthSlider.setBounds(562, 230, 56, 48);
-    f1EnvDepthLabel.setBounds(562, 278, 56, 14);
-
-    f1KeyTrackSlider.setBounds(624, 230, 58, 48);
-    f1KeyTrackLabel.setBounds(624, 278, 58, 14);
-
-    f1LfoDepthSlider.setBounds(686, 230, 58, 48);
-    f1LfoDepthLabel.setBounds(686, 278, 58, 14);
-
-    f2CutoffSlider.setBounds(766, 154, 58, 56);
-    f2CutoffLabel.setBounds(766, 210, 58, 14);
-
-    f2ResonanceSlider.setBounds(832, 154, 56, 56);
-    f2ResonanceLabel.setBounds(832, 210, 56, 14);
-
-    f2ModeComboBox.setBounds(900, 168, 90, 24);
-    f2ModeLabel.setBounds(900, 194, 90, 14);
-
-    f2EnvDepthSlider.setBounds(766, 230, 58, 48);
-    f2EnvDepthLabel.setBounds(766, 278, 58, 14);
-
-    f2KeyTrackSlider.setBounds(828, 230, 58, 48);
-    f2KeyTrackLabel.setBounds(828, 278, 58, 14);
-
-    oscilloscope.setBounds(1082, 88, 258, 232);
-    crtThemeButton.setBounds(1082, 324, 258, 20);
-
-    // Vector ADSR Layout
-    envPrevButton.setBounds(18, 384, 22, 22);
-    envVcfTabButton.setBounds(44, 384, 60, 22);
-    envVcaTabButton.setBounds(108, 384, 60, 22);
-    envAuxTabButton.setBounds(172, 384, 60, 22);
-    envNextButton.setBounds(236, 384, 22, 22);
-
-    envLcd.setBounds(18, 412, 268, 86);
-
-    envAttackSlider.setBounds(18, 506, 56, 50);
-    envAttackLabel.setBounds(18, 556, 56, 14);
-
-    envDecaySlider.setBounds(88, 506, 56, 50);
-    envDecayLabel.setBounds(88, 556, 56, 14);
-
-    envSustainSlider.setBounds(158, 506, 56, 50);
-    envSustainLabel.setBounds(158, 556, 56, 14);
-
-    envReleaseSlider.setBounds(228, 506, 56, 50);
-    envReleaseLabel.setBounds(228, 556, 56, 14);
-
-    auxModSectionLabel.setBounds(302, 384, 180, 20);
-
-    auxToPitchSlider.setBounds(318, 410, 56, 44);
-    auxToPitchLabel.setBounds(318, 452, 56, 14);
-
-    auxToFilter1Slider.setBounds(398, 410, 56, 44);
-    auxToFilter1Label.setBounds(398, 452, 56, 14);
-
-    auxToFilter2Slider.setBounds(318, 468, 56, 44);
-    auxToFilter2Label.setBounds(318, 510, 56, 14);
-
-    auxToWavefoldSlider.setBounds(398, 468, 56, 44);
-    auxToWavefoldLabel.setBounds(398, 510, 56, 14);
-
-    auxToPWMSlider.setBounds(358, 526, 56, 44);
-    auxToPWMLabel.setBounds(358, 568, 56, 14);
-
-    // LFOs & Mod Matrix Layout
-    lfoSelectComboBox.setBounds(512, 390, 84, 22);
-    lfoShapeComboBox.setBounds(604, 390, 88, 22);
-    lfoRateSlider.setBounds(700, 386, 52, 46);
-    lfoRateLabel.setBounds(700, 432, 52, 14);
-    lfoDepthSlider.setBounds(754, 386, 52, 46);
-    lfoDepthLabel.setBounds(754, 432, 52, 14);
-
-    modSlotSelectComboBox.setBounds(512, 458, 84, 22);
-    modSlotEnableButton.setBounds(604, 458, 68, 22);
-
-    modSourceLabel.setBounds(512, 482, 110, 14);
-    modSourceComboBox.setBounds(512, 496, 110, 22);
-
-    modDestLabel.setBounds(630, 482, 130, 14);
-    modDestComboBox.setBounds(630, 496, 130, 22);
-
-    modAmountSlider.setBounds(770, 486, 54, 44);
-    modAmountLabel.setBounds(770, 530, 54, 14);
-
-    modViaSourceLabel.setBounds(512, 524, 120, 14);
-    modViaSourceComboBox.setBounds(512, 538, 120, 22);
-
-    modViaAmountSlider.setBounds(642, 528, 54, 44);
-    modViaAmountLabel.setBounds(642, 572, 54, 14);
-
-    // =========================================================================
-    // Redesigned Vector Sequencer Panel Layout (458 x 236 px at x=892, y=356)
-    // =========================================================================
-    // Row 1: Header / Track / Page / Transport (y = 384, h = 22)
-    seqTrackLayerButton.setBounds(902, 384, 68, 22);
-    seqTrackMuteButton.setBounds(972, 384, 34, 22);
-    seqTrackSoloButton.setBounds(1008, 384, 34, 22);
-
-    seqPage1Button.setBounds(1048, 384, 20, 22);
-    seqPage2Button.setBounds(1070, 384, 20, 22);
-    seqPage3Button.setBounds(1092, 384, 20, 22);
-    seqPage4Button.setBounds(1114, 384, 20, 22);
-
-    seqPlayButton.setBounds(1142, 384, 44, 22);
-    seqRecButton.setBounds(1188, 384, 40, 22);
-    arpEnableButton.setBounds(1230, 384, 52, 22);
-    chordEnableButton.setBounds(1284, 384, 56, 22);
-
-    // Row 2: Vector Sequencer LCD (y = 410, h = 96, w = 438)
-    seqLcd.setBounds(902, 410, 438, 96);
-
-    // Row 3: QWERTY Focus & Step Edit Strip (y = 510, h = 22)
-    prevStepButton.setBounds(902, 510, 22, 22);
-    currentStepLabel.setBounds(926, 510, 54, 22);
-    nextStepButton.setBounds(982, 510, 22, 22);
-
-    auditionStepButton.setBounds(1008, 510, 56, 22);
-    clearLocksButton.setBounds(1068, 510, 52, 22);
-
-    stepGateLabel.setBounds(1124, 510, 56, 20);
-    stepGateSlider.setBounds(1182, 502, 42, 38);
-
-    chordTypeComboBox.setBounds(1238, 510, 102, 22);
-
-    // Row 4: Unified Hardware Controls Deck (y = 536 to 588)
-    seqTempoSlider.setBounds(902, 536, 44, 42);
-    seqTempoLabel.setBounds(902, 576, 44, 12);
-
-    seqSyncButton.setBounds(950, 546, 38, 22);
-
-    seqSwingSlider.setBounds(992, 536, 44, 42);
-    seqSwingLabel.setBounds(992, 576, 44, 12);
-
-    seqGateLengthSlider.setBounds(1040, 536, 44, 42);
-    seqGateLengthLabel.setBounds(1040, 576, 44, 12);
-
-    seqDivisionComboBox.setBounds(1088, 546, 58, 22);
-    seqDivisionLabel.setBounds(1088, 572, 58, 12);
-
-    seqDirectionComboBox.setBounds(1150, 546, 62, 22);
-    seqDirectionLabel.setBounds(1150, 572, 62, 12);
-
-    seqLengthComboBox.setBounds(1216, 546, 60, 22);
-    seqLengthLabel.setBounds(1216, 572, 60, 12);
-
-    seqModeComboBox.setBounds(1280, 546, 60, 22);
-    seqModeLabel.setBounds(1280, 572, 60, 12);
-
-    // Master FX Layout
-    chorus1Button.setBounds(24, 638, 56, 26);
-    chorus2Button.setBounds(84, 638, 56, 26);
-
-    fxRoutingComboBox.setBounds(148, 638, 92, 24);
-    fxRoutingLabel.setBounds(148, 620, 92, 14);
-
-    delaySyncButton.setBounds(262, 638, 58, 26);
-    delayPingPongButton.setBounds(328, 638, 86, 26);
-
-    delayTimeSlider.setBounds(434, 624, 60, 46);
-    delayTimeLabel.setBounds(434, 672, 60, 14);
-
-    delayFeedbackSlider.setBounds(542, 624, 60, 46);
-    delayFeedbackLabel.setBounds(542, 672, 60, 14);
-
-    delayDampSlider.setBounds(650, 624, 60, 46);
-    delayDampLabel.setBounds(650, 672, 60, 14);
-
-    delayMixSlider.setBounds(758, 624, 60, 46);
-    delayMixLabel.setBounds(758, 672, 60, 14);
-
-    reverbSizeSlider.setBounds(920, 624, 60, 46);
-    reverbSizeLabel.setBounds(920, 672, 60, 14);
-
-    reverbDampSlider.setBounds(1050, 624, 60, 46);
-    reverbDampLabel.setBounds(1050, 672, 60, 14);
-
-    reverbMixSlider.setBounds(1180, 624, 60, 46);
-    reverbMixLabel.setBounds(1180, 672, 60, 14);
-
-    // Keybed & Wheels Layout (Vertical Linear Wheels with Double-Click Reset)
-    pitchWheelSlider.setBounds(14, 704, 38, 96);
-    pitchWheelLabel.setBounds(14, 800, 38, 14);
-
-    modWheelSlider.setBounds(58, 704, 38, 96);
-    modWheelLabel.setBounds(58, 800, 38, 14);
-
-    keyboardComponent.setBounds(108, 702, 1240, 112);
-    keyboardComponent.setAvailableRange(36, 96);
-    keyboardComponent.setLowestVisibleKey(36);
-    keyboardComponent.setKeyWidth(1240.0f / 36.0f);
-    keyboardComponent.setScrollButtonsVisible(false);
-
-    if (! isApplyingFitScale)
+    // The canvas keeps its logical 1920x1500 size; the transform scales it.
+    content.setBounds (0, 0, 1920, 1500);
+    content.setTransform (juce::AffineTransform::scale ((float) getWidth() / 1920.0f));
+    layoutS116();
+
+}
+
+static juce::uint64 snapHash (juce::Component& c)
+{
+    auto img = c.createComponentSnapshot (c.getLocalBounds(), false, 1.0f);
+    juce::Image::BitmapData bd (img, juce::Image::BitmapData::readOnly);
+    juce::uint64 h = 1469598103934665603ULL;
+    for (int y = 0; y < bd.height; ++y)
+    { auto* pp = bd.getLinePointer (y); for (int i = 0; i < bd.width * bd.pixelStride; ++i) h = (h ^ pp[i]) * 1099511628211ULL; }
+    return h;
+}
+
+void Simple116AudioProcessorEditor::runSelfTest()
+{
+    auto pump = [] (int ms) { juce::Timer::callAfterDelay (ms, [] { juce::MessageManager::getInstance()->stopDispatchLoop(); }); juce::MessageManager::getInstance()->runDispatchLoop(); };
+    auto state = [this]() -> juce::String
     {
-        // A host driven resize: keep the console fully visible by scaling it to
-        // whatever space the host gave us.
-        const float fitW = static_cast<float>(getWidth())  / static_cast<float>(UI_WIDTH);
-        const float fitH = static_cast<float>(getHeight()) / static_cast<float>(UI_HEIGHT);
-        const float fit  = juce::jlimit (0.35f, 1.0f, std::min (fitW, fitH));
+        auto& seq = audioProcessor.sequencer;
+        const int sel = seq.getSelectedStep();
+        const auto& step = seq.getActiveTrack().getStep (sel);
+        return "selectedStep=" + juce::String (sel) +
+               " note=" + juce::String (step.note) +
+               " gate=" + juce::String (step.gateLength) +
+               " velocity=" + juce::String (step.velocity) +
+               " active=" + juce::String ((int) step.active) +
+               " page=" + juce::String (seq.getActivePage()) +
+               " track=" + juce::String ((int) seq.getEditTrack());
+    };
+    auto report = [&] (const juce::String& what, const juce::String& before, const juce::String& after, bool handled)
+    { std::cerr << "SELFTEST " << what << " handled=" << (int) handled << " before=[" << before << "] after=[" << after << "]" << std::endl; };
 
-        if (! approximatelyEqual (fit, uiScale))
+    seqLcd.grabKeyboardFocus(); pump (100);
+    std::cerr << "SELFTEST focus: seqLcd.hasKeyboardFocus=" << (int) seqLcd.hasKeyboardFocus (false)
+              << " wantsFocus=" << (int) seqLcd.getWantsKeyboardFocus()
+              << " focused=" << (juce::Component::getCurrentlyFocusedComponent() != nullptr ? juce::Component::getCurrentlyFocusedComponent()->getName() : "none")
+              << " seqLcdVisible=" << (int) seqLcd.isShowing() << " bounds=" << seqLcd.getBoundsInParent().toString() << std::endl;
+
+    struct K { const char* name; juce::KeyPress key; };
+    for (auto k : { K { "right", juce::KeyPress (juce::KeyPress::rightKey) }, K { "left", juce::KeyPress (juce::KeyPress::leftKey) },
+                    K { "up", juce::KeyPress (juce::KeyPress::upKey) },       K { "down", juce::KeyPress (juce::KeyPress::downKey) },
+                    K { "space", juce::KeyPress (juce::KeyPress::spaceKey) },
+                    K { "d", juce::KeyPress ('d') }, K { "a", juce::KeyPress ('a') }, K { "w", juce::KeyPress ('w') }, K { "s", juce::KeyPress ('s') } })
+    {
+        const auto b = state();
+        auto hb = snapHash (seqLcd);
+        const bool h = seqLcd.keyPressed (k.key);
+        pump (60);
+        auto ha = snapHash (seqLcd);
+        report (k.name, b, state(), h);
+        std::cerr << "SELFTEST " << k.name << " hashBefore=" << hb << " hashAfter=" << ha << " changed=" << (int) (hb != ha) << std::endl;
+    }
+
+    {
+        const auto b = state();
+        const juce::Point<float> p ((float) seqLcd.getWidth() * 0.30f, (float) seqLcd.getHeight() * 0.60f);
+        juce::MouseEvent e (juce::Desktop::getInstance().getMainMouseSource(), p, juce::ModifierKeys::leftButtonModifier,
+                            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, &seqLcd, &seqLcd, juce::Time::getCurrentTime(),
+                            p, juce::Time::getCurrentTime(), 1, false);
+        seqLcd.mouseDown (e); seqLcd.mouseUp (e); pump (60);
+        report ("mouseClick", b, state(), true);
+    }
+    // PLAY animation test
+    {
+        seqPlayButton.triggerClick(); pump (100);
+        juce::uint64 hashes[4];
+        int steps[4];
+        for (int i = 0; i < 4; ++i)
         {
-            uiScale = fit;
-            uiCanvas.setTransform (juce::AffineTransform::scale (uiScale));
+            pump (250);
+            hashes[i] = snapHash (seqLcd);
+            steps[i] = audioProcessor.sequencer.isPlaying ? audioProcessor.sequencer.getActiveTrack().getCurrentStep() : -1;
+            std::cerr << "SELFTEST play " << i << " hash=" << hashes[i] << " playingStep=" << steps[i] << std::endl;
+        }
+        seqPlayButton.triggerClick(); pump (100);
+    }
+
+    // Envelope table
+    {
+        auto envState = [this]() -> juce::String
+        {
+            return "A=" + juce::String (envAttackSlider.getValue()) +
+                   " D=" + juce::String (envDecaySlider.getValue()) +
+                   " S=" + juce::String (envSustainSlider.getValue()) +
+                   " R=" + juce::String (envReleaseSlider.getValue()) +
+                   " LCD_A=" + juce::String (envAttackSlider.valueToProportionOfLength (envAttackSlider.getValue())) +
+                   " LCD_D=" + juce::String (envDecaySlider.valueToProportionOfLength (envDecaySlider.getValue())) +
+                   " LCD_S=" + juce::String (envSustainSlider.valueToProportionOfLength (envSustainSlider.getValue())) +
+                   " LCD_R=" + juce::String (envReleaseSlider.valueToProportionOfLength (envReleaseSlider.getValue()));
+        };
+        std::cerr << "SELFTEST env INIT: " << envState() << std::endl;
+    }
+
+    // Control bounds table for LFO/MOD and Sequencer
+    {
+        auto cb = [&] (const juce::String& name, juce::Component& c)
+        { std::cerr << "BOUNDS " << name << " " << c.getBoundsInParent().toString() << " visible=" << (int) c.isShowing() << std::endl; };
+        cb ("lfoSelectComboBox", lfoSelectComboBox);
+        cb ("lfoShapeComboBox", lfoShapeComboBox);
+        cb ("lfoRateSlider", lfoRateSlider);
+        cb ("lfoDepthSlider", lfoDepthSlider);
+        cb ("modSlotSelectComboBox", modSlotSelectComboBox);
+        cb ("modSlotEnableButton", modSlotEnableButton);
+        cb ("modSourceComboBox", modSourceComboBox);
+        cb ("modDestComboBox", modDestComboBox);
+        cb ("modViaSourceComboBox", modViaSourceComboBox);
+        cb ("modAmountSlider", modAmountSlider);
+        cb ("modViaAmountSlider", modViaAmountSlider);
+        cb ("seqTrackLayerButton", seqTrackLayerButton);
+        cb ("seqPlayButton", seqPlayButton);
+        cb ("seqLcd", seqLcd);
+        cb ("prevStepButton", prevStepButton);
+        cb ("seqTempoSlider", seqTempoSlider);
+        cb ("stepGateSlider", stepGateSlider);
+        cb ("seqDivisionComboBox", seqDivisionComboBox);
+    }
+
+    // Fonts
+    {
+        juce::File f1 ("Source/Resources/Fonts/BarlowCondensed-Bold.ttf");
+        juce::File f2 ("Source/Resources/Fonts/ShareTechMono-Regular.ttf");
+        std::cerr << "SELFTEST fonts: Barlow=" << (int) f1.existsAsFile() << " ShareTech=" << (int) f2.existsAsFile() << " S116_HAS_FONTS=" 
+#ifdef S116_HAS_FONTS
+                  << 1
+#else
+                  << 0
+#endif
+                  << std::endl;
+    }
+
+    // Header controls
+    {
+        std::cerr << "SELFTEST header: lcdScreen=" << lcdScreen.getBounds().toString()
+                  << " chassisThemeButton=" << chassisThemeButton.getBounds().toString()
+                  << " ledThemeButton=" << ledThemeButton.getBounds().toString()
+                  << " masterVolumeSlider=" << masterVolumeSlider.getBounds().toString() << std::endl;
+    }
+
+    // Header LCD test
+    {
+        masterVolumeSlider.setValue (0.5, juce::sendNotificationSync);
+        std::cerr << "SELFTEST lcd after knob: " << lcdScreen.getCurrentText() << std::endl;
+        voiceModeComboBox.setSelectedId (2, juce::sendNotificationSync);
+        std::cerr << "SELFTEST lcd after combo: " << lcdScreen.getCurrentText() << std::endl;
+        chassisThemeButton.triggerClick();
+        std::cerr << "SELFTEST lcd after button: " << lcdScreen.getCurrentText() << std::endl;
+    }
+
+    // Mod matrix test
+    {
+        modSlotSelectComboBox.setSelectedId (4, juce::sendNotificationSync); // slot 3 (1-indexed)
+        modSourceComboBox.setSelectedId (2, juce::sendNotificationSync);
+        modDestComboBox.setSelectedId (3, juce::sendNotificationSync);
+        modAmountSlider.setValue (0.5, juce::sendNotificationSync);
+        modSlotEnableButton.setToggleState (true, juce::sendNotificationSync);
+        pump (100);
+        auto& slot = audioProcessor.modMatrix[1].getSlot (2);
+        std::cerr << "SELFTEST modmatrix: source=" << (int) slot.source << " dest=" << (int) slot.destination << " amount=" << slot.amount << " enabled=" << (int) slot.enabled << std::endl;
+        // Switch to slot 1 and back
+        modSlotSelectComboBox.setSelectedId (2, juce::sendNotificationSync);
+        pump (50);
+        modSlotSelectComboBox.setSelectedId (4, juce::sendNotificationSync);
+        pump (50);
+        std::cerr << "SELFTEST modmatrix after switch: source=" << (int) modSourceComboBox.getSelectedId() << " dest=" << (int) modDestComboBox.getSelectedId() << " amount=" << modAmountSlider.getValue() << " enabled=" << (int) modSlotEnableButton.getToggleState() << std::endl;
+    }
+
+    // LFO select test
+    {
+        std::cerr << "SELFTEST lfo select before: lfoRateSlider paramID=" << lfoRateSlider.getProperties().getWithDefault ("paramID", juce::var ("-")).toString() << std::endl;
+        lfoSelectComboBox.setSelectedId (2, juce::sendNotificationSync);
+        pump (50);
+        std::cerr << "SELFTEST lfo select after: lfoRateSlider paramID=" << lfoRateSlider.getProperties().getWithDefault ("paramID", juce::var ("-")).toString() << std::endl;
+    }
+
+    // WCAG contrast table for each chassis theme
+    {
+        auto relLum = [] (juce::Colour c) {
+            auto lin = [] (float x) { return x <= 0.03928f ? x / 12.92f : std::pow ((x + 0.055f) / 1.055f, 2.4f); };
+            return 0.2126f * lin (c.getFloatRed()) + 0.7152f * lin (c.getFloatGreen()) + 0.0722f * lin (c.getFloatBlue());
+        };
+        auto contrast = [&] (juce::Colour a, juce::Colour b) {
+            float la = relLum (a), lb = relLum (b);
+            float mx = std::max (la, lb), mn = std::min (la, lb);
+            return (mx + 0.05f) / (mn + 0.05f);
+        };
+        auto derivedBtnText = [&] (const S116::Theme& t) {
+            const bool lightFace = t.btnTop.interpolatedWith (t.btnBottom, 0.5f).getPerceivedBrightness() > 0.55f;
+            return lightFace ? juce::Colour (0xff14171a) : t.btnText;
+        };
+        const char* themeNames[] = { "Graphite", "JP-8000 Blue", "Classic Silver", "SH-101 Red" };
+        for (int ti = 0; ti < (int) S116::ThemeId::numThemes; ++ti)
+        {
+            S116::skin().setTheme (static_cast<S116::ThemeId> (ti));
+            const auto& t = S116::skin().theme();
+            auto row = [&] (const juce::String& item, juce::Colour txt, juce::Colour bg) {
+                std::cerr << "CONTRAST " << themeNames[ti] << " | " << item.toStdString() << " | " << contrast (txt, bg) << std::endl;
+            };
+            const auto bt = derivedBtnText (t);
+            row ("button text on btn face (top)",    bt, t.btnTop);
+            row ("button text on btn face (bottom)", bt, t.btnBottom);
+            row ("caption text on panel (top)",     t.caption, t.panelTop);
+            row ("caption text on panel (bottom)",  t.caption, t.panelBottom);
+            row ("field label on panel",            t.heading, t.panelTop);
+            row ("sub-heading on panel",            t.sub, t.panelTop);
+            row ("readout text on plate (top)",     t.ledReadout, t.plateTop);
+            row ("readout text on plate (bottom)",  t.ledReadout, t.plateBottom);
+            row ("combo text on sel background (top)",    t.selText, t.selTop);
+            row ("combo text on sel background (bottom)", t.selText, t.selBottom);
+            row ("section title on panel",          t.heading, t.panelTop);
+            row ("header logo on header (top)",     t.logo, t.hdrTop);
+            row ("header logo on header (bottom)",  t.logo, t.hdrBottom);
+            row ("step numbers on lcd",             t.ledReadout.darker (0.3f), t.lcdBottom);
+            row ("popup text on popup bg",          t.selText, juce::Colour (0xff0e0f12));
         }
     }
+    // Scope colour test
+    {
+        auto& skin = SkinManager::getInstance();
+        for (int i = 0; i < (int) CRTTheme::Count; ++i)
+        {
+            skin.setCRTTheme (static_cast<CRTTheme> (i));
+            if (auto* p = audioProcessor.apvts.getParameter ("crtTheme"))
+                p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (i)));
+            oscilloscope.setTheme (static_cast<OscilloscopeComponent::Theme> (i));
+            scopeFrame.setPhosphor (oscilloscope.getThemeColor());
+            scopeFrame.setLabels ("S-116 CRT // " + skin.getCRTThemeName(), "ZOOM 1.00x");
+            crtThemeButton.setButtonText ("SCOPE: " + skin.getCRTThemeName());
+            std::cerr << "SELFTEST scope " << i << " | " << skin.getCRTThemeName()
+                      << " | osc=" << oscilloscope.getThemeColor().toString()
+                      << " | phosphor=" << scopeFrame.getPhosphor().toString()
+                      << " | button=" << crtThemeButton.getButtonText()
+                      << " | label=" << scopeFrame.getLeftLabel() << std::endl;
+        }
+    }
+
+    // LED colour test (Graphite chassis: pointer follows LED)
+    {
+        S116::skin().setTheme (S116::ThemeId::GraphiteRed);
+        auto& skin = SkinManager::getInstance();
+        seqSyncButton.setToggleState (true, juce::dontSendNotification);
+        for (int i = 0; i < (int) LEDTheme::Count; ++i)
+        {
+            skin.setLEDTheme (static_cast<LEDTheme> (i));
+            if (auto* p = audioProcessor.apvts.getParameter ("ledTheme"))
+                p->setValueNotifyingHost (p->convertTo0to1 (static_cast<float> (i)));
+            S116::skin().refreshLed();
+            juce::Colour phosphorBefore = scopeFrame.getPhosphor();
+            std::cerr << "SELFTEST led " << i << " | " << skin.getLEDThemeName (static_cast<LEDTheme> (i))
+                      << " | base=" << skin.getLEDColour().toString()
+                      << " | ledOn=" << S116::skin().theme().ledOn.toString()
+                      << " | ledText=" << S116::skin().theme().ledText.toString()
+                      << " | ledReadout=" << S116::skin().theme().ledReadout.toString()
+                      << " | pointer=" << S116::skin().theme().pointer.toString()
+                      << " | phosphor=" << phosphorBefore.toString()
+                      << " (unchanged=" << (phosphorBefore == scopeFrame.getPhosphor() ? "YES" : "NO") << ")"
+                      << " | lcdHash=" << snapHash (lcdScreen)
+                      << " | knobHash=" << snapHash (masterVolumeSlider)
+                      << " | btnHash=" << snapHash (seqSyncButton)
+                      << std::endl;
+        }
+        // Silver and SH-101: pointer must NOT follow LED
+        for (auto tid : { S116::ThemeId::ClassicSilver, S116::ThemeId::SH101Red })
+        {
+            S116::skin().setTheme (tid);
+            skin.setLEDTheme (LEDTheme::Amber);
+            S116::skin().refreshLed();
+            std::cerr << "SELFTEST led pointer-nofollow " << S116::skin().theme().name.toStdString()
+                      << " | pointer=" << S116::skin().theme().pointer.toString().toStdString() << std::endl;
+        }
+    }
+
+    std::cerr << "SELFTEST done" << std::endl;
+    juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    juce::JUCEApplication::getInstance()->systemRequestedQuit();
 }
+
+#include "S116EditorLayout.inc"

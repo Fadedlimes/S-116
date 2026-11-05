@@ -162,6 +162,7 @@ public:
         activeQueue = &internalQueue;
 
         currentTheme = static_cast<Theme>(SkinManager::getInstance().getCRTTheme());
+        traceColour = getThemeColor();
 
         startTimerHz(60);
     }
@@ -185,6 +186,7 @@ public:
     {
         currentTheme = newTheme;
         SkinManager::getInstance().setCRTTheme(static_cast<CRTTheme>(newTheme));
+        traceColour = getThemeColor();
         if (onThemeChanged)
             onThemeChanged(currentTheme);
         repaint();
@@ -192,6 +194,8 @@ public:
 
     Theme getTheme() const noexcept { return currentTheme; }
 
+    void setTraceOnly (bool to) noexcept { traceOnly = to; repaint(); }
+    void setTraceColour (juce::Colour c) noexcept { traceColour = c; repaint(); }
     void cycleTheme() noexcept
     {
         int next = (static_cast<int>(currentTheme) + 1) % static_cast<int>(Theme::Count);
@@ -252,6 +256,17 @@ public:
 
         if (w <= 10.0f || h <= 10.0f)
             return;
+
+        if (traceOnly)
+        {
+            g.fillAll (juce::Colours::transparentBlack);
+            const auto screenBounds = bounds;
+            g.saveState();
+            g.reduceClipRegion (screenBounds.toNearestInt());
+            drawWaveformTrace (g, screenBounds, traceColour);
+            g.restoreState();
+            return;
+        }
 
         drawChassisAndBezel(g, bounds);
 
@@ -498,7 +513,7 @@ private:
         }
     }
 
-    void drawWaveformTrace(juce::Graphics& g, const juce::Rectangle<float>& screenBounds) noexcept
+    void drawWaveformTrace(juce::Graphics& g, const juce::Rectangle<float>& screenBounds, juce::Colour traceCol = {}) noexcept
     {
         const float left = screenBounds.getX();
         const float w    = screenBounds.getWidth();
@@ -531,6 +546,16 @@ private:
                 waveformPath.startNewSubPath(x, y);
             else
                 waveformPath.lineTo(x, y);
+        }
+
+        if (traceOnly)
+        {
+            // 6px glow stroke at 30% alpha #ff3a4c, then 1.6px core
+            g.setColour (themeCol.withAlpha (0.30f));
+            g.strokePath (waveformPath, juce::PathStrokeType (6.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.setColour (traceCol);
+            g.strokePath (waveformPath, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            return;
         }
 
         g.setColour(themeCol.withAlpha(0.10f));
@@ -594,6 +619,8 @@ private:
     float timebaseScale = 1.0f;
     float verticalGain = 1.0f;
     float subSampleOffset = 0.0f;
+    bool traceOnly = false;
+    juce::Colour traceColour { 0xff9aa3 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OscilloscopeComponent)
 };

@@ -43,7 +43,7 @@ apvts(*this, nullptr, "Parameters", createParameterLayout())
     // the global settings file). A restored session overwrites these again, so the
     // VST session colour always wins once a project has been loaded.
     {
-        auto& skin = SkinManager::getInstance();
+        auto& skin = ::SkinManager::getInstance();
 
         auto seed = [this] (const char* paramId, int value)
         {
@@ -271,11 +271,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout Simple116AudioProcessor::cre
     // UI/SkinManager.h exactly, so that the stored index can be cast directly.
     juce::StringArray ledThemeNames;
     for (int i = 0; i < static_cast<int>(LEDTheme::Count); ++i)
-        ledThemeNames.add (SkinManager::getLEDThemeName (static_cast<LEDTheme>(i)));
+        ledThemeNames.add (::SkinManager::getLEDThemeName (static_cast<LEDTheme>(i)));
 
     juce::StringArray crtThemeNames;
     for (int i = 0; i < static_cast<int>(CRTTheme::Count); ++i)
-        crtThemeNames.add (SkinManager::getCRTThemeOptionName (static_cast<CRTTheme>(i)));
+        crtThemeNames.add (::SkinManager::getCRTThemeOptionName (static_cast<CRTTheme>(i)));
 
     params.push_back(std::make_unique<juce::AudioParameterChoice>("guiTheme", "Theme",
                                                                   juce::StringArray{"Classic Silver", "Midnight Blue", "Vintage Wood", "Stealth Dark"}, 0));

@@ -2,6 +2,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
+#include "SkinManager.h"
 
 class VintageButtonKeyboard : public juce::Component {
 public:
@@ -42,6 +43,14 @@ public:
 
     void paint(juce::Graphics& g) override {
         auto bounds = getLocalBounds().toFloat();
+
+        const auto& t = S116::skin().theme();
+        const juce::Colour whiteKeyBody = t.caption;
+        const juce::Colour blackKeyBody = t.knobBodyBottom;
+        const juce::Colour ledLit = t.ledOn;
+        const juce::Colour ledGlow = ledLit.withAlpha (0.6f);
+        const juce::Colour ledHighlight = ledLit.brighter (0.3f);
+        const juce::Colour ledUnlit = t.ledOff;
 
         // Background Tray
         g.setColour(juce::Colour(0xff181b21));
@@ -110,13 +119,13 @@ public:
 
                 bool isDown = activeNotes[static_cast<size_t>(keyIdx)] || (lastMouseDownKey == keyIdx);
 
-                g.setColour(juce::Colour(0xff252a33));
+                g.setColour(blackKeyBody);
                 g.fillRoundedRectangle(keyRect, 4.0f);
 
                 auto innerKey = keyRect.reduced(1.2f);
-                juce::ColourGradient wGrad(isDown ? juce::Colour(0xffcbd0d8) : juce::Colour(0xfff8f9fb),
+                juce::ColourGradient wGrad(isDown ? whiteKeyBody.darker(0.25f) : whiteKeyBody,
                                            innerKey.getX(), innerKey.getY(),
-                                           isDown ? juce::Colour(0xffa5acb8) : juce::Colour(0xffd4d9e2),
+                                           isDown ? whiteKeyBody.darker(0.45f) : whiteKeyBody.darker(0.15f),
                                            innerKey.getX(), innerKey.getBottom(), false);
                 g.setGradientFill(wGrad);
                 g.fillRoundedRectangle(innerKey, 3.0f);
@@ -146,13 +155,13 @@ public:
 
                 bool isDown = activeNotes[static_cast<size_t>(keyIdx)] || (lastMouseDownKey == keyIdx);
 
-                g.setColour(juce::Colour(0xff101317));
+                g.setColour(blackKeyBody.darker(0.15f));
                 g.fillRoundedRectangle(keyRect, 3.0f);
 
                 auto innerKey = keyRect.reduced(1.0f);
-                juce::ColourGradient bGrad(isDown ? juce::Colour(0xff4a5260) : juce::Colour(0xff2c323c),
+                juce::ColourGradient bGrad(isDown ? blackKeyBody.brighter(0.15f) : blackKeyBody,
                                            innerKey.getX(), innerKey.getY(),
-                                           isDown ? juce::Colour(0xff222730) : juce::Colour(0xff181b21),
+                                           isDown ? blackKeyBody.darker(0.20f) : blackKeyBody.darker(0.30f),
                                            innerKey.getX(), innerKey.getBottom(), false);
                 g.setGradientFill(bGrad);
                 g.fillRoundedRectangle(innerKey, 2.5f);
@@ -270,6 +279,11 @@ private:
     }
 
     void drawKeyLED(juce::Graphics& g, float cx, float cy, int keyIdx) {
+        const auto& t = S116::skin().theme();
+        const juce::Colour ledLit = t.ledOn;
+        const juce::Colour ledGlow = ledLit.withAlpha (0.6f);
+        const juce::Colour ledHighlight = ledLit.brighter (0.3f);
+        const juce::Colour ledUnlit = t.ledOff;
         float r = 2.4f;
         bool isLit = activeNotes[static_cast<size_t>(keyIdx)] || (lastMouseDownKey == keyIdx);
 

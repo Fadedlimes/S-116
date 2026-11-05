@@ -1,4 +1,5 @@
 #pragma once
+#include "S116Layout.h"
 
 #if __has_include(<JuceHeader.h>)
  #include <JuceHeader.h>
@@ -11,6 +12,9 @@
 
 #include "PluginProcessor.h"
 #include "UI/SkinManager.h"
+#include "UI/SilverLookAndFeel.h"
+#include "UI/S116Theme.h"
+#include "UI/S116Widgets.h"
 #include "UI/OscilloscopeComponent.h"
 #include "DSP/SequencerEngine.h"
 #include "DSP/ModulationMatrix.h"
@@ -67,6 +71,7 @@ public:
         repaint();
     }
 
+    juce::String getCurrentText() const noexcept { return activeParamName + " / " + activeParamVal; }
     void setPresetInfo(const juce::String& name, const juce::String& subInfo) noexcept
     {
         currentPatchName  = name.toUpperCase();
@@ -483,33 +488,33 @@ public:
 
     bool keyPressed(const juce::KeyPress& key) override
     {
-        if (key.isKeyCode(juce::KeyPress::leftKey))
+        if (key.isKeyCode(juce::KeyPress::leftKey) || key.getKeyCode() == 'a' || key.getKeyCode() == 'A')
         {
             if (onStepNavigate) onStepNavigate(-1);
             return true;
         }
-        if (key.isKeyCode(juce::KeyPress::rightKey))
+        if (key.isKeyCode(juce::KeyPress::rightKey) || key.getKeyCode() == 'd' || key.getKeyCode() == 'D')
         {
             if (onStepNavigate) onStepNavigate(1);
             return true;
         }
-        if (key.isKeyCode(juce::KeyPress::spaceKey))
-        {
-            if (onStepToggleTrigger) onStepToggleTrigger(selectedStep);
-            if (onStepAudition) onStepAudition(selectedStep);
-            return true;
-        }
-        if (key.isKeyCode(juce::KeyPress::upKey))
+        if (key.isKeyCode(juce::KeyPress::upKey) || key.getKeyCode() == 'w' || key.getKeyCode() == 'W')
         {
             const int delta = key.getModifiers().isShiftDown() ? 12 : 1;
             if (onStepTranspose) onStepTranspose(selectedStep, delta);
             if (onStepAudition) onStepAudition(selectedStep);
             return true;
         }
-        if (key.isKeyCode(juce::KeyPress::downKey))
+        if (key.isKeyCode(juce::KeyPress::downKey) || key.getKeyCode() == 's' || key.getKeyCode() == 'S')
         {
             const int delta = key.getModifiers().isShiftDown() ? -12 : -1;
             if (onStepTranspose) onStepTranspose(selectedStep, delta);
+            if (onStepAudition) onStepAudition(selectedStep);
+            return true;
+        }
+        if (key.isKeyCode(juce::KeyPress::spaceKey))
+        {
+            if (onStepToggleTrigger) onStepToggleTrigger(selectedStep);
             if (onStepAudition) onStepAudition(selectedStep);
             return true;
         }
@@ -857,7 +862,7 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EditorCanvas)
 };
 
-class Simple116AudioProcessorEditor : public juce::AudioProcessorEditor,
+class Simple116AudioProcessorEditor : public juce::AudioProcessorEditor, private juce::ChangeListener,
                                       private juce::Timer
 {
 public:
@@ -872,7 +877,13 @@ public:
 
     // Screen fitting: the console has a fixed 1360x820 canvas. On displays that
     // cannot show it at 1:1 the whole console is scaled down uniformly.
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { studioLookAndFeel.applyTheme(); sendLookAndFeelChange(); }
+
     void applyFitScale();
+    void layoutS116();
+    void runSelfTest();
+    S116::layout::DecorSet decor;
+    bool zOrderDone = false;
     void paintChassis(juce::Graphics& g);
 
     // Preset & Expansion Card Disk Management
@@ -949,7 +960,17 @@ private:
 
     // All console widgets live on this canvas so that the entire UI can be
     // scaled uniformly (see applyFitScale) without touching the layout code.
-    EditorCanvas uiCanvas;
+    juce::Component content;
+    S116::ChassisBackground chassisBg;
+    S116::HeaderBar headerBar;
+    S116::SectionPanel oscPanel { "OSCILLATORS" };
+    S116::SectionPanel filtPanel { "FILTER" };
+    S116::SectionPanel scopePanel { "SCOPE" };
+    S116::SectionPanel envPanel { "ENVELOPE" };
+    S116::SectionPanel lfoPanel { "LFO / MOD" };
+    S116::SectionPanel seqPanel { "SEQUENCER / ARP" };
+    S116::SectionPanel fxPanel { "MASTER EFFECTS" };
+    S116::CrtScopeFrame scopeFrame;
     float uiScale = 1.0f;
     bool isApplyingFitScale = false;
 
